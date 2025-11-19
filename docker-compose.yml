@@ -24,8 +24,10 @@ services:
       - MINIO_ENDPOINT=minio:9000
       - QDRANT_URL=http://qdrant:6333
       - PYTHONPATH=/app
-      # Add your API Key later in .env
-      # - GOOGLE_API_KEY=${GOOGLE_API_KEY} 
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY} 
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     # volumes:
     #   - ./api:/app
     depends_on:
@@ -53,20 +55,6 @@ services:
     container_name: codesense-qdrant
     ports:
       - "6333:6333"
-  
-  # worker:
-  #   build: ./api
-  #   container_name: codesense-worker
-  #   command: celery -A app.core.cel.celery_app worker --loglevel=info
-  #   environment:
-  #     - CELERY_BROKER_URL=redis://redis:6379/0
-  #     - CELERY_RESULT_BACKEND=redis://redis:6379/0
-  #     - PYTHONPATH=/app
-  #     # - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-  #   # volumes:
-  #   #   - ./api:/app
-  #   depends_on:
-  #     - redis
 
   worker:
     build:
@@ -77,5 +65,9 @@ services:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - PYTHONPATH=/app
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY} 
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     depends_on:
       - redis
