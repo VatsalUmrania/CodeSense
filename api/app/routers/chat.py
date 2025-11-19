@@ -18,25 +18,33 @@ async def chat(request: ChatRequest):
     if not query_vector:
         raise HTTPException(status_code=500, detail="Failed to process question")
 
-    # 2. Search (Increased limit to 15 chunks)
+    # 2. Search
     search_results = vector_store.client.search(
         collection_name="codesense_codebase",
         query_vector=query_vector,
-        limit=15 
+        limit=10
     )
     
-    # 3. Context Construction
+    # 3. Context Construction & Source Collection
     context_text = ""
-    for hit in search_results:
-        context_text += f"{hit.payload['content']}\n\n"
-
-    # 4. Generate
-    # We pass the filename list separately for debugging/UI
-    sources = [h.payload['metadata']['file_path'] for h in search_results]
+    sources = []
     
+    for hit in search_results:
+        file_path = hit.payload['metadata']['file_path']
+        content = hit.payload['content']
+        
+        context_text += f"{content}\n\n"
+        
+        # Structure the source for the frontend to open
+        sources.append({
+            "file": file_path,
+            "code": content
+        })
+
+    # 4. Generate Answer
     answer = gemini.generate_response(request.message, context_text)
     
     return {
         "response": answer, 
-        "context_used": sources
+        "context_used": sources  # Now returns list of objects {file, code}
     }

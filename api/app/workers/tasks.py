@@ -1,6 +1,7 @@
 import shutil
 import os
 import uuid
+import redis
 from concurrent.futures import ThreadPoolExecutor
 from celery import shared_task
 from app.services.ingestion.cloner import ClonerService
@@ -8,6 +9,9 @@ from app.services.ingestion.parser import ParserService
 from app.services.storage import StorageService
 from app.services.vector.store import VectorStore
 from app.services.llm.gemini import GeminiService
+
+# Setup Redis Client
+redis_client = redis.Redis(host='redis', port=6379, db=0, decode_responses=True)
 
 @shared_task(name="ingest_repo_task")
 def ingest_repo_task(repo_url: str):
@@ -23,14 +27,12 @@ def ingest_repo_task(repo_url: str):
         raw_chunks = parser.parse_directory(local_path)
         print(f"Parsed {len(raw_chunks)} chunks. Starting parallel embedding...")
 
-        # 3. Embed & Store (Parallelized)
+        # 3. Embed & Store
         gemini = GeminiService()
         vector_store = VectorStore()
         
-        # We process in larger batches for Qdrant, but parallelize the Embedding step
         batch_size = 100
         
-        # Helper function for parallel execution
         def get_embedding_item(item):
             vector = gemini.embed_content(item['content'])
             if vector:
@@ -50,29 +52,29 @@ def ingest_repo_task(repo_url: str):
             print(f"Processing batch {i} to {i+len(batch_items)}...")
             
             vectors_to_upload = []
-            
-            # Run 5 embedding requests at the same time
             with ThreadPoolExecutor(max_workers=5) as executor:
                 results = executor.map(get_embedding_item, batch_items)
                 
-            # Collect valid results
             for res in results:
                 if res:
                     vectors_to_upload.append(res)
             
-            # Upload to Qdrant
             if vectors_to_upload:
                 vector_store.upsert_chunks(vectors_to_upload)
                 
-        # 4. Archive
+        # 4. Archive & Cleanup
         zip_path = shutil.make_archive(local_path, 'zip', local_path)
         storage = StorageService()
         storage.upload_file(zip_path, f"{repo_id}.zip")
         
-        # Cleanup
         shutil.rmtree(local_path)
         if os.path.exists(zip_path):
             os.remove(zip_path)
+            
+        # --- NEW: CACHE THE RESULT ---
+        # We map the URL to the Repo ID so next time we skip all this work
+        print(f"Caching repo: {repo_url} -> {repo_id}")
+        redis_client.set(f"repo:{repo_url}", repo_id)
         
         return {
             "status": "success", 
