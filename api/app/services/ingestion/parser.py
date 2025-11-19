@@ -1,73 +1,81 @@
 import os
 from typing import List, Dict
-from tree_sitter_languages import get_language, get_parser
 
 class ParserService:
     def __init__(self):
-        # Supported languages mapping
+        # Added .md, .json, .css, .html, .yml
         self.languages = {
             ".py": "python",
             ".js": "javascript",
             ".ts": "typescript",
+            ".tsx": "typescript",
+            ".jsx": "javascript",
             ".go": "go",
             ".rs": "rust",
-            ".java": "java"
+            ".java": "java",
+            ".md": "markdown",
+            ".json": "json",
+            ".css": "css",
+            ".html": "html",
+            ".yml": "yaml",
+            ".yaml": "yaml"
         }
 
     def parse_directory(self, repo_path: str) -> List[Dict]:
-        """
-        Walks the directory and parses all supported files.
-        Returns a list of chunks: [{'content': '...', 'metadata': {...}}]
-        """
         chunks = []
-        
         for root, _, files in os.walk(repo_path):
+            # Skip strict exclusions
+            if "node_modules" in root or ".git" in root or "venv" in root:
+                continue
+
             for file in files:
-                # Skip hidden files/dirs
-                if file.startswith(".") or "node_modules" in root or "venv" in root:
-                    continue
-                
                 file_path = os.path.join(root, file)
                 ext = os.path.splitext(file)[1]
                 
                 if ext in self.languages:
-                    file_chunks = self._parse_file(file_path, self.languages[ext])
+                    # Pass the relative path so the AI knows "src/components/Button.tsx"
+                    # instead of "/tmp/codesense_repos/uuid/src/..."
+                    rel_path = os.path.relpath(file_path, repo_path)
+                    file_chunks = self._parse_file(file_path, rel_path, self.languages[ext])
                     chunks.extend(file_chunks)
                     
         return chunks
 
-    def _parse_file(self, file_path: str, lang_name: str) -> List[Dict]:
+    def _parse_file(self, full_path: str, rel_path: str, lang_name: str) -> List[Dict]:
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
                 code = f.read()
-            
-            # Simple chunking strategy: Split by function/class definitions would be ideal
-            # For MVP/Simplicity: We will split by logical lines or token count.
-            # Ideally, we use tree-sitter queries here to extract specific nodes.
-            
-            # Let's stick to a naive splitter first to ensure flow works, 
-            # then upgrade to Tree-Sitter smart splitting later.
             
             chunks = []
             lines = code.split('\n')
-            chunk_size = 50 # lines
             
-            for i in range(0, len(lines), chunk_size):
-                chunk_content = '\n'.join(lines[i:i+chunk_size])
+            # --- IMPROVEMENT: Overlap ---
+            # We add overlap so context isn't cut in the middle of a function
+            chunk_size = 60 
+            overlap = 10 
+            
+            for i in range(0, len(lines), chunk_size - overlap):
+                chunk_lines = lines[i:i+chunk_size]
+                chunk_content = '\n'.join(chunk_lines)
+                
                 if not chunk_content.strip(): 
                     continue
+                
+                # Add filename header to every chunk so the AI knows where it comes from
+                # This helps the vector search significantly.
+                final_content = f"// File: {rel_path}\n" + chunk_content
                     
                 chunks.append({
-                    "content": chunk_content,
+                    "content": final_content,
                     "metadata": {
-                        "file_path": file_path,
+                        "file_path": rel_path,
                         "language": lang_name,
-                        "start_line": i,
-                        "end_line": i + chunk_size
+                        "start_line": i + 1,
+                        "end_line": i + len(chunk_lines)
                     }
                 })
             return chunks
             
         except Exception as e:
-            print(f"Error parsing {file_path}: {e}")
+            print(f"Error parsing {rel_path}: {e}")
             return []
