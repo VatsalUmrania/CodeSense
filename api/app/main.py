@@ -1,7 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from celery.result import AsyncResult
-from app.core.cel import celery_app      # <-- Note the 'app.' prefix
-from app.workers.tasks import test_celery_task # <-- Note the 'app.' prefix
+from app.core.cel import celery_app      
+from app.workers.tasks import ingest_repo_task
 
 app = FastAPI(title="CodeSense API")
 
@@ -13,12 +13,25 @@ def read_root():
 def health_check():
     return {"status": "ok"}
 
-@app.post("/test-task")
-def trigger_task(word: str):
-    task = test_celery_task.delay(word)
-    return {"task_id": task.id, "status": "Processing"}
 
 @app.get("/task-status/{task_id}")
 def get_task_status(task_id: str):
     task_result = AsyncResult(task_id, app=celery_app)
     return {"status": task_result.state, "result": task_result.result}
+
+@app.post("/ingest")
+def ingest_repo(url: str):
+    """Start the ingestion process."""
+    if "github.com" not in url:
+        raise HTTPException(status_code=400, detail="Only GitHub URLs supported")
+    
+    task = ingest_repo_task.delay(url)
+    return {"task_id": task.id, "status": "Processing"}
+
+@app.get("/status/{task_id}")
+def get_status(task_id: str):
+    task_result = AsyncResult(task_id, app=celery_app)
+    return {
+        "status": task_result.state, 
+        "result": task_result.result
+    }
