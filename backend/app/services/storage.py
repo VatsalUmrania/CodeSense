@@ -25,6 +25,10 @@ class StorageService:
     def get_file_content(self, repo_id: str, file_path: str):
         """Extracts a single file from the stored repo zip."""
         try:
+            # Normalize path: remove leading slash
+            if file_path.startswith('/'):
+                file_path = file_path[1:]
+
             # Get the zip object from MinIO
             response = self.client.get_object(self.bucket, f"{repo_id}.zip")
             # Read zip into memory
@@ -34,6 +38,11 @@ class StorageService:
                     return f.read().decode('utf-8', errors='ignore')
         except Exception as e:
             print(f"Error fetching file {file_path} from {repo_id}: {e}")
+            # Optional: Print available files for debugging
+            # try:
+            #     with zipfile.ZipFile(io.BytesIO(response.read())) as z:
+            #         print(f"Available files: {z.namelist()[:5]}...")
+            # except: pass
             return None
         
     def list_files(self, repo_id: str):

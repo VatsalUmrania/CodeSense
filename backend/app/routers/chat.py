@@ -1,23 +1,25 @@
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Dict, Optional
+import json
 from app.services.llm.gemini import GeminiService
 from app.services.vector.store import VectorStore
-from app.services.storage import StorageService # <--- New Import
+from app.services.storage import StorageService
 
 router = APIRouter()
 
 class ChatRequest(BaseModel):
     message: str
     history: List[Dict[str, str]] = []
-    repo_id: Optional[str] = None         # <--- Needed to fetch pinned files
-    pinned_files: List[str] = []          # <--- New field
+    repo_id: Optional[str] = None
+    pinned_files: List[str] = []
 
 @router.post("/chat")
 async def chat(request: ChatRequest):
     gemini = GeminiService()
     vector_store = VectorStore()
-    storage = StorageService() # <--- Init storage
+    storage = StorageService()
     
     # 1. Embed User Query
     query_vector = gemini.embed_content(request.message)
@@ -43,11 +45,11 @@ async def chat(request: ChatRequest):
                     "pinned": True
                 })
 
-    # 3. Search Vector DB (augment with semantic search)
+    # 3. Search Vector DB
     search_results = vector_store.client.search(
         collection_name="codesense_codebase",
         query_vector=query_vector,
-        limit=5 # Reduce limit if we have pinned files to save tokens
+        limit=5 
     )
     
     for hit in search_results:
@@ -72,10 +74,14 @@ async def chat(request: ChatRequest):
             "repo_id": repo_id
         })
 
-    # 4. Generate Response
-    answer = gemini.generate_response(request.message, context_text, request.history)
-    
-    return {
-        "response": answer, 
-        "context_used": sources
-    }
+    # 4. Stream Response
+    async def response_generator():
+        # Send sources first as a JSON line
+        yield json.dumps({"type": "sources", "data": sources}) + "\n"
+        
+        # Stream the AI response chunks
+        for chunk in gemini.generate_response_stream(request.message, context_text, request.history):
+            # Yield text chunks wrapped in JSON
+            yield json.dumps({"type": "chunk", "content": chunk}) + "\n"
+
+    return StreamingResponse(response_generator(), media_type="application/x-ndjson")
