@@ -83,7 +83,7 @@ app.add_middleware(
 
 app.include_router(chat.router)
 app.include_router(repo.router)
-app.include_router(advanced.router) # <--- Register here
+app.include_router(advanced.router) 
 
 @app.get("/")
 def read_root():

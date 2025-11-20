@@ -1,19 +1,21 @@
 import React, { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneLight, vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { User, Terminal, Copy, Check, FileText, ChevronDown, ChevronUp, Sparkles, BookOpen } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { Copy, Check, FileText, ChevronDown, BookOpen, Terminal } from "lucide-react";
+import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 interface MessageProps {
   role: string;
   content: string;
   sources?: { file: string; code: string }[];
+  user?: { email: string } | null; // <--- New Prop
   onSourceClick?: (file: string) => void;
 }
 
-export function MessageBubble({ role, content, sources, onSourceClick }: MessageProps) {
+export function MessageBubble({ role, content, sources, user, onSourceClick }: MessageProps) {
   const isUser = role === "user";
   const [copied, setCopied] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -26,19 +28,24 @@ export function MessageBubble({ role, content, sources, onSourceClick }: Message
 
   const displaySources = isExpanded ? sources : sources?.slice(0, 3);
   const remainingCount = (sources?.length || 0) - 3;
+  
+  // Get initial from user email or default to 'U'
+  const userInitial = user?.email?.[0]?.toUpperCase() || "U";
 
   return (
     <motion.div 
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       className={cn(
-        "flex w-full mb-8 gap-4",
+        "flex w-full mb-8 gap-3",
         isUser ? "justify-end" : "justify-start"
       )}
     >
-      {/* Avatar */}
+      {/* AI Avatar (Left) */}
       {!isUser && (
-        <img src="/logo.svg" alt="AI" className="w-6 h-6" />
+        <div className="w-8 h-8 shrink-0 flex items-center justify-center mt-1">
+           <img src="/logo.svg" alt="AI" className="w-8 h-8" />
+        </div>
       )}
 
       <div className={cn(
@@ -61,13 +68,13 @@ export function MessageBubble({ role, content, sources, onSourceClick }: Message
                   
                   return !inline && match ? (
                     <div className="rounded-md overflow-hidden my-3 border border-border/50 shadow-sm bg-secondary">
-                      <div className="flex items-center justify-between px-3 py-1.5 bg-primary-foreground border-b border-[#333]">
+                      <div className="flex items-center justify-between px-3 py-1.5 bg-primary-foreground border-b border-[#333] text-primary-foreground">
                          <div className="flex items-center gap-2">
-                           <Terminal className="w-3 h-3 text-blue-400"/> 
-                           <span className="font-mono text-[10px] text-zinc-400">{match[1]}</span>
+                           <Terminal className="w-3 h-3 opacity-50"/> 
+                           <span className="font-mono text-[10px] opacity-70">{match[1]}</span>
                          </div>
                          <button onClick={() => copyToClipboard(codeString)}>
-                            {copied ? <Check className="w-3 h-3 text-green-500"/> : <Copy className="w-3 h-3 text-zinc-500 hover:text-zinc-300"/>}
+                            {copied ? <Check className="w-3 h-3 text-green-400"/> : <Copy className="w-3 h-3 opacity-50 hover:opacity-100"/>}
                          </button>
                       </div>
                       <SyntaxHighlighter
@@ -103,7 +110,7 @@ export function MessageBubble({ role, content, sources, onSourceClick }: Message
                 <span className="text-xs font-medium text-muted-foreground">References</span>
              </div>
              
-             <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                 {displaySources?.map((source, idx) => (
                    <button
                       key={idx}
@@ -135,8 +142,17 @@ export function MessageBubble({ role, content, sources, onSourceClick }: Message
              )}
           </div>
         )}
-
       </div>
+
+      {/* User Avatar (Right) */}
+      {isUser && (
+         <Avatar className="h-8 w-8 shrink-0 border border-primary/20 mt-1">
+            <AvatarImage src="" />
+            <AvatarFallback className="bg-primary text-primary-foreground text-xs font-bold">
+                {userInitial}
+            </AvatarFallback>
+         </Avatar>
+      )}
     </motion.div>
   );
 }
