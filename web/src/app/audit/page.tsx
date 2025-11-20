@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useEffect, useState, Suspense } from 'react'; // <--- Added Suspense
+import { useSearchParams, useRouter } from 'next/navigation';
 import { AppSidebar } from "@/components/layout/AppSidebar";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Loader2, ShieldAlert, Zap, AlertTriangle, CheckCircle, Terminal, Code2, Code } from "lucide-react";
+import { Loader2, ShieldAlert, Zap, AlertTriangle, CheckCircle, Terminal } from "lucide-react";
 import { toast } from "sonner";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
@@ -17,14 +17,18 @@ interface AuditItem {
   title: string;
   description: string;
   suggestion: string;
-  code_fix?: string; // New field
+  code_fix?: string; 
 }
 
-export default function AuditPage() {
+function AuditContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const repoId = searchParams.get("id");
   const repoUrl = searchParams.get("url") || "";
   
+  // Sidebar State
+  const [isSidebarExpanded, setIsSidebarExpanded] = useState(true);
+
   const [report, setReport] = useState<AuditItem[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -57,11 +61,17 @@ export default function AuditPage() {
   };
 
   return (
-    <div className="flex h-screen w-full bg-background text-foreground">
-      <AppSidebar isOpen={true} repoUrl={repoUrl} ingestStatus="success" messages={[]} onClear={() => {}} />
+    <div className="flex h-screen w-full bg-background text-foreground font-sans">
+      
+      <AppSidebar 
+        isCollapsed={!isSidebarExpanded}
+        toggleSidebar={() => setIsSidebarExpanded(!isSidebarExpanded)}
+        repoUrl={repoUrl}
+        onClear={() => router.push('/')}
+      />
       
       <main className="flex-1 relative h-full overflow-y-auto p-8 bg-muted/5">
-         <div className="max-w-6xl mx-auto space-y-8">
+         <div className="max-w-4xl mx-auto space-y-8">
             
             <div className="flex items-center justify-between">
                 <div>
@@ -122,30 +132,17 @@ export default function AuditPage() {
                                 {item.code_fix && (
                                     <div className="ml-8 rounded-md overflow-hidden border border-border/60 shadow-sm">
                                         <div className="bg-muted/50 px-3 py-1.5 border-b border-border/50 flex items-center gap-2">
-                                            <Code className="w-3 h-3 text-muted-foreground" />
+                                            <Terminal className="w-3 h-3 text-muted-foreground" />
                                             <span className="text-[10px] font-mono text-muted-foreground font-medium">Proposed Fix</span>
                                         </div>
                                         <SyntaxHighlighter
-                                            language="javascript"
+                                            language="javascript" 
                                             style={oneLight}
-                                            customStyle={{ 
-                                                margin: 0,  
-                                                background: 'transparent', 
-                                                fontSize: '13px', 
-                                                lineHeight: '1.6',
-                                                fontFamily: "var(--font-geist-mono), monospace",
-                                            }}
-                                            showLineNumbers={true}
-                                            lineNumberStyle={{ 
-                                                minWidth: "3.5em", 
-                                                paddingRight: "1.5em", 
-                                                color: "#52525b", 
-                                                textAlign: "right",
-                                                fontSize: '11px'
-                                            }}
+                                            customStyle={{ margin: 0, padding: '1rem', fontSize: '12px', backgroundColor: 'white' }}
+                                            wrapLines={true}
                                         >
-                                        {item.code_fix}
-                                    </SyntaxHighlighter>
+                                            {item.code_fix}
+                                        </SyntaxHighlighter>
                                     </div>
                                 )}
                             </div>
@@ -157,4 +154,18 @@ export default function AuditPage() {
       </main>
     </div>
   );
+}
+
+// --- WRAP WITH SUSPENSE HERE ---
+export default function AuditPage() {
+    return (
+        <Suspense fallback={
+            <div className="flex h-screen w-full items-center justify-center bg-background text-muted-foreground">
+                <Loader2 className="w-6 h-6 animate-spin mr-2" />
+                <span>Loading Audit...</span>
+            </div>
+        }>
+            <AuditContent />
+        </Suspense>
+    );
 }

@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useEffect, useState, Suspense } from 'react'; // <--- Added Suspense
+import { useSearchParams, useRouter } from 'next/navigation';
 import ReactFlow, { 
   Background, 
   Controls, 
@@ -24,7 +24,7 @@ import { AppSidebar } from "@/components/layout/AppSidebar";
 import { Loader2, AlertCircle, Filter, Layers, Maximize2, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { fileIcons } from "@/config/fileIcons"; // Using your existing icon config
+import { fileIcons } from "@/config/fileIcons";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -32,19 +32,16 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const FileNode = ({ data }: NodeProps) => {
   const fileName = data.label || "unknown";
   const ext = fileName.split('.').pop()?.toLowerCase() || "text";
-  // Fallback icon if specific extension not found in your config
   const Icon = fileIcons[ext] || <FileText size={16} className="text-muted-foreground" />;
 
   return (
     <div className="relative group">
-      {/* Input Handle */}
       <Handle 
         type="target" 
         position={Position.Top} 
         className="w-2! h-2! bg-muted-foreground/50! border-none! transition-all group-hover:bg-primary!" 
       />
       
-      {/* Node Body */}
       <div className="flex items-center gap-3 px-4 py-2.5 bg-card border border-border/60 shadow-sm rounded-xl min-w-[180px] max-w-[250px] transition-all duration-200 group-hover:border-primary/50 group-hover:shadow-md group-hover:-translate-y-0.5">
         <div className="shrink-0 opacity-70 group-hover:opacity-100 transition-opacity">
           {Icon}
@@ -61,7 +58,6 @@ const FileNode = ({ data }: NodeProps) => {
         </div>
       </div>
 
-      {/* Output Handle */}
       <Handle 
         type="source" 
         position={Position.Bottom} 
@@ -71,7 +67,6 @@ const FileNode = ({ data }: NodeProps) => {
   );
 };
 
-// Register custom types outside component
 const nodeTypes = {
   file: FileNode,
 };
@@ -83,8 +78,8 @@ const getLayoutedElements = (nodes: Node[], edges: Edge[]) => {
   
   dagreGraph.setGraph({ 
       rankdir: 'TB', 
-      ranksep: 120,  // Vertical spacing between layers
-      nodesep: 80    // Horizontal spacing between nodes
+      ranksep: 120,
+      nodesep: 80 
   });
 
   nodes.forEach((node) => {
@@ -113,10 +108,14 @@ const getLayoutedElements = (nodes: Node[], edges: Edge[]) => {
 };
 
 function GraphContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const repoId = searchParams.get("id");
   const repoUrl = searchParams.get("url") || "";
   const { fitView } = useReactFlow();
+
+  // Sidebar State
+  const [isSidebarExpanded, setIsSidebarExpanded] = useState(true);
 
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -134,14 +133,23 @@ function GraphContent() {
         try {
             setLoading(true);
             const res = await fetch(`${API_URL}/advanced/graph/${repoId}`);
-            if (!res.ok) throw new Error(`Failed to fetch: ${res.statusText}`);
+            
+            if (!res.ok) {
+                throw new Error(`Server Error: ${res.status}`);
+            }
             
             const data = await res.json();
-            if (data.nodes.length === 0) toast.warning("No dependency data found.");
+            if (!data.nodes || data.nodes.length === 0) {
+                 toast.warning("No dependency data found.");
+                 setRawGraph({ nodes: [], edges: [] });
+                 return;
+            }
+
             setRawGraph(data);
         } catch (e: any) {
-            console.error(e);
+            console.error("Graph Fetch Error:", e);
             setError(e.message);
+            toast.error("Failed to load graph data");
         } finally {
             setLoading(false);
         }
@@ -157,7 +165,6 @@ function GraphContent() {
     let filteredNodes = rawGraph.nodes;
     let filteredEdges = rawGraph.edges;
 
-    // Filter Logic for "Main Flow"
     if (!isFullView) {
         const mainKeywords = ['page', 'layout', 'main', 'index', 'app', 'route', 'server', 'api'];
         const mainNodes = rawGraph.nodes.filter(n => {
@@ -169,7 +176,6 @@ function GraphContent() {
             const mainNodeIds = new Set(mainNodes.map(n => n.id));
             const childIds = new Set<string>();
             
-            // Include immediate children to show context
             rawGraph.edges.forEach(e => {
                 if (mainNodeIds.has(e.source)) childIds.add(e.target);
             });
@@ -178,21 +184,18 @@ function GraphContent() {
         }
     }
 
-    // Filter edges based on visible nodes
     const visibleNodeIds = new Set(filteredNodes.map((n: any) => n.id));
     filteredEdges = rawGraph.edges.filter((e: any) => 
         visibleNodeIds.has(e.source) && visibleNodeIds.has(e.target)
     );
 
-    // Create React Flow Nodes
     const flowNodes: Node[] = filteredNodes.map((n: any) => ({
         id: n.id,
-        type: 'file', // Use our custom type
-        data: { label: n.label, path: n.id }, // Pass path for hover effect
+        type: 'file',
+        data: { label: n.label, path: n.id },
         position: { x: 0, y: 0 }
     }));
 
-    // Create React Flow Edges
     const flowEdges: Edge[] = filteredEdges.map((e: any, i: number) => ({
         id: `e${i}`,
         source: e.source,
@@ -216,11 +219,16 @@ function GraphContent() {
 
   return (
     <div className="flex h-screen w-full bg-background text-foreground font-sans">
-      <AppSidebar isOpen={true} repoUrl={repoUrl} ingestStatus="success" messages={[]} onClear={() => {}} />
+      
+      <AppSidebar 
+        isCollapsed={!isSidebarExpanded}
+        toggleSidebar={() => setIsSidebarExpanded(!isSidebarExpanded)}
+        repoUrl={repoUrl}
+        onClear={() => router.push('/')}
+      />
       
       <main className="flex-1 relative h-full bg-[#fafafa] dark:bg-black/20">
         
-        {/* Loading / Error Overlays */}
         {loading && (
              <div className="absolute inset-0 flex items-center justify-center z-50 bg-background/80 backdrop-blur-sm">
                  <div className="flex flex-col items-center gap-3">
@@ -239,7 +247,6 @@ function GraphContent() {
             </div>
         )}
 
-        {/* Control Panel */}
         <div className="absolute top-6 left-6 z-10 pointer-events-none">
             <div className="bg-background/95 backdrop-blur-xl border border-border/60 p-1 rounded-2xl shadow-2xl shadow-black/5 pointer-events-auto min-w-[320px] flex flex-col">
                 
@@ -294,7 +301,7 @@ function GraphContent() {
           maxZoom={2}
           fitView
           proOptions={{ hideAttribution: true }}
-          className="bg-dot-pattern" // Ensure you have a dot pattern class or use inline styles
+          className="bg-dot-pattern" 
         >
           <Background color="currentColor" gap={24} size={1} className="opacity-[0.03]" />
           <Controls className="bg-background border-border fill-foreground text-foreground shadow-sm rounded-lg overflow-hidden" showInteractive={false} />
@@ -314,10 +321,18 @@ function GraphContent() {
   );
 }
 
+// --- WRAP WITH SUSPENSE HERE ---
 export default function GraphPage() {
     return (
         <ReactFlowProvider>
-            <GraphContent />
+            <Suspense fallback={
+                <div className="flex h-screen w-full items-center justify-center bg-background text-muted-foreground">
+                    <Loader2 className="w-6 h-6 animate-spin mr-2" />
+                    <span>Loading Graph...</span>
+                </div>
+            }>
+                <GraphContent />
+            </Suspense>
         </ReactFlowProvider>
     );
 }
