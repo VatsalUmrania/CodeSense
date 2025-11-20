@@ -219,8 +219,8 @@ export function CodeViewer({
                       // Only highlight if we are in Full File mode and have a valid range
                       if (isActuallyFull && startLine && endLine) {
                           if (lineNumber >= startLine && lineNumber <= endLine) {
-                              style.backgroundColor = "rgba(147, 51, 234, 0.15)"; // Primary color alpha
-                              style.borderLeft = "3px solid rgb(147, 51, 234)";  // Primary color solid
+                            style.backgroundColor = "color-mix(in srgb, var(--primary) 15%, transparent)";
+                            style.borderLeft = "3px solid var(--primary)";
                           }
                       }
                       return { style };

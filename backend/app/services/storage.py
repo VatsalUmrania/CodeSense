@@ -1,29 +1,3 @@
-# from minio import Minio
-# import os
-
-# class StorageService:
-#     def __init__(self):
-#         self.client = Minio(
-#             "minio:9000", # Docker service name
-#             access_key="minioadmin",
-#             secret_key="minioadmin",
-#             secure=False
-#         )
-#         self.bucket = "repos"
-#         self._ensure_bucket()
-
-#     def _ensure_bucket(self):
-#         """Create the bucket if it doesn't exist."""
-#         if not self.client.bucket_exists(self.bucket):
-#             self.client.make_bucket(self.bucket)
-
-#     def upload_file(self, file_path: str, object_name: str):
-#         """Upload a file to MinIO."""
-#         self.client.fput_object(
-#             self.bucket, object_name, file_path
-#         )
-#         print(f"Uploaded {object_name} to MinIO.")
-
 from minio import Minio
 import os
 import zipfile
@@ -61,3 +35,14 @@ class StorageService:
         except Exception as e:
             print(f"Error fetching file {file_path} from {repo_id}: {e}")
             return None
+        
+    def list_files(self, repo_id: str):
+        """Returns a list of all file paths in the repo zip."""
+        try:
+            response = self.client.get_object(self.bucket, f"{repo_id}.zip")
+            with zipfile.ZipFile(io.BytesIO(response.read())) as z:
+                # Filter out directories and hidden files
+                return [f for f in z.namelist() if not f.endswith('/') and '/.' not in f and not f.startswith('.')]
+        except Exception as e:
+            print(f"List files error: {e}")
+            return []
