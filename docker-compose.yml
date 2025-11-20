@@ -14,7 +14,7 @@ services:
 
   # --- Backend (FastAPI) ---
   api:
-    build: ./api
+    build: ./backend
     container_name: codesense-api
     ports:
       - "8000:8000"
@@ -28,8 +28,6 @@ services:
     dns:
       - 8.8.8.8
       - 8.8.4.4
-    # volumes:
-    #   - ./api:/app
     depends_on:
       - redis
       - minio
@@ -58,7 +56,7 @@ services:
 
   worker:
     build:
-      context: ./api
+      context: ./backend
       dockerfile: worker.Dockerfile
     container_name: codesense-worker
     environment:

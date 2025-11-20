@@ -1,0 +1,40 @@
+import { JSX } from "react";
+import {
+  SiTypescript,
+  SiJavascript,
+  SiPython,
+  SiRust,
+  SiGo,
+  SiHtml5,
+  SiCss3,
+  SiJson,
+  SiMarkdown,
+  SiBabel,
+  SiYaml,
+  SiDocker,
+  SiTailwindcss,
+  SiReact,
+  SiVuedotjs,
+  SiNextdotjs,
+} from "react-icons/si";
+import { RiNodejsFill } from "react-icons/ri";
+
+export const fileIcons: Record<string, JSX.Element> = {
+  typescript: <SiTypescript size={18} />,
+  javascript: <SiJavascript size={18} />,
+  python: <SiPython size={18} />,
+  rust: <SiRust size={18} />,
+  go: <SiGo size={18} />,
+  html: <SiHtml5 size={18} />,
+  css: <SiCss3 size={18} />,
+  json: <SiJson size={18} />,
+  markdown: <SiMarkdown size={18} />,
+  yaml: <SiYaml size={18} />,
+  babel: <SiBabel size={18} />,
+  docker: <SiDocker size={18} />,
+  tailwind: <SiTailwindcss size={18} />,
+  react: <SiReact size={18} />,
+  vue: <SiVuedotjs size={18} />,
+  nextjs: <SiNextdotjs size={18} />,
+  node: <RiNodejsFill size={18} />,
+};

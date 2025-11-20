@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from celery.result import AsyncResult
 from app.core.cel import celery_app
 from app.workers.tasks import ingest_repo_task
-from app.routers import chat
+from app.routers import chat, repo
 
 app = FastAPI(title="CodeSense API")
 
@@ -20,6 +20,8 @@ app.add_middleware(
 )
 
 app.include_router(chat.router)
+
+app.include_router(repo.router)
 
 @app.get("/")
 def read_root():

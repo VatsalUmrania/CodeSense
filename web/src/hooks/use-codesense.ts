@@ -8,6 +8,7 @@ export interface Source {
   code: string;
   start_line?: number;
   end_line?: number;
+  repo_id?: string; // <--- Added
 }
 
 export interface Message {
@@ -22,30 +23,21 @@ export function useCodeSense() {
   const [ingestStatus, setIngestStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [contextFiles, setContextFiles] = useState<Source[]>([]);
 
-  // --- Action: Ingest Repo ---
   const ingestRepo = async (url: string) => {
-    if (!url) {
-        toast.error("Please enter a valid URL");
-        return;
-    }
-    
+    if (!url) return;
     setIngestStatus("loading");
     const toastId = toast.loading("Cloning repository...");
 
     try {
       const res = await fetch(`${API_URL}/ingest?url=${encodeURIComponent(url)}`, { method: "POST" });
-      if (!res.ok) throw new Error("Failed to initiate ingestion");
-      
       const data = await res.json();
       
-      // Handle Cache Hit
       if (data.status === "cached") {
         setIngestStatus("success");
-        toast.success("Loaded from cache instantly!", { id: toastId });
+        toast.success("Loaded from cache!", { id: toastId });
         return;
       }
 
-      // Handle New Ingestion (Polling)
       const taskId = data.task_id;
       const interval = setInterval(async () => {
         try {
@@ -55,46 +47,56 @@ export function useCodeSense() {
             if (statusData.status === "SUCCESS") {
               clearInterval(interval);
               setIngestStatus("success");
-              toast.success("Repository indexed and ready!", { id: toastId });
+              toast.success("Ready to chat!", { id: toastId });
             } else if (statusData.status === "FAILURE") {
               clearInterval(interval);
               setIngestStatus("error");
-              toast.error(`Ingestion failed: ${statusData.result?.message}`, { id: toastId });
+              toast.error("Ingestion failed", { id: toastId });
             }
         } catch (e) {
             clearInterval(interval);
-            setIngestStatus("error");
-            toast.error("Lost connection to server", { id: toastId });
         }
       }, 2000);
 
-    } catch (error: any) {
+    } catch (error) {
       setIngestStatus("error");
-      toast.error(error.message, { id: toastId });
+      toast.error("Connection failed", { id: toastId });
     }
   };
 
-  // --- Action: Send Message ---
   const sendMessage = async (content: string) => {
     if (!content.trim()) return;
 
     const userMsg: Message = { role: "user", content };
-    setMessages((prev) => [...prev, userMsg]);
+    
+    // Optimistic UI update
+    const newHistory = [...messages, userMsg];
+    setMessages(newHistory);
     setIsChatting(true);
 
     try {
+      // Prepare history payload (exclude the current new message from history as it's sent as 'message')
+      // We strip out 'sources' to keep the payload light
+      const historyPayload = messages.map(m => ({
+        role: m.role,
+        content: m.content
+      }));
+
       const response = await fetch(`${API_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: content }),
+        body: JSON.stringify({ 
+            message: content,
+            history: historyPayload // <--- Send History
+        }),
       });
+      
       const data = await response.json();
       
       if (data.response && data.response.startsWith("AI Error")) {
          toast.error("AI Brain connection failed");
          setMessages((prev) => [...prev, { role: "assistant", content: "I'm having trouble connecting. Please try again." }]);
       } else {
-         // Update Context Files in Sidebar
          if (data.context_used) {
             const newSources = data.context_used as Source[];
             setContextFiles(prev => {
@@ -118,10 +120,22 @@ export function useCodeSense() {
     }
   };
 
+  // --- NEW: Fetch Full File ---
+  const fetchFileContent = async (repoId: string, filePath: string): Promise<string | null> => {
+      try {
+          const res = await fetch(`${API_URL}/repo/${repoId}/file?path=${encodeURIComponent(filePath)}`);
+          if (!res.ok) return null;
+          const data = await res.json();
+          return data.content;
+      } catch (e) {
+          console.error(e);
+          return null;
+      }
+  };
+
   const clearSession = () => {
       setMessages([]);
       setContextFiles([]);
-      toast.info("Session cleared");
   };
 
   return {
@@ -131,6 +145,7 @@ export function useCodeSense() {
     contextFiles,
     ingestRepo,
     sendMessage,
+    fetchFileContent, // <--- Export this
     clearSession
   };
 }
