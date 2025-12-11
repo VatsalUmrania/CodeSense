@@ -8,7 +8,6 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
-
 model User {
   id        String   @id @default(uuid())
   email     String   @unique
@@ -22,6 +21,7 @@ model Repository {
   id        String   @id @default(uuid())
   url       String   @unique
   name      String
+  
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   
@@ -35,13 +35,17 @@ model ChatSession {
   updatedAt    DateTime  @updatedAt
   
   repositoryId String
-  repository   Repository @relation(fields: [repositoryId], references: [id])
+  repository   Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
   
   // Optional User link (null = anonymous session)
   userId       String?
-  user         User?      @relation(fields: [userId], references: [id])
+  user         User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
   
   messages     Message[]
+
+  // Performance Indexes
+  @@index([userId])
+  @@index([repositoryId])
 }
 
 model Message {
@@ -52,6 +56,9 @@ model Message {
   
   chatSessionId String
   chatSession   ChatSession @relation(fields: [chatSessionId], references: [id], onDelete: Cascade)
+
+  // Performance Index for Chat Load
+  @@index([chatSessionId])
 }
 
 enum Role {

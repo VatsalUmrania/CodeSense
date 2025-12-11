@@ -1,174 +1,137 @@
 import os
-import re
-from typing import List, Dict
+from typing import List, Dict, Set
+from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
 
 class ParserService:
     def __init__(self):
-        self.languages = {
-            ".py": "python", ".js": "javascript", ".ts": "typescript", 
-            ".tsx": "typescript", ".jsx": "javascript", ".go": "go", 
-            ".rs": "rust", ".java": "java", ".md": "markdown", 
-            ".json": "json", ".css": "css", ".html": "html", 
-            ".yml": "yaml", ".yaml": "yaml"
+        # Map file extensions to LangChain languages
+        self.extension_map = {
+            ".py": Language.PYTHON,
+            ".js": Language.JS,
+            ".ts": Language.TS,
+            ".tsx": Language.TS,
+            ".java": Language.JAVA,
+            ".go": Language.GO,
+            ".rs": Language.RUST,
+            ".html": Language.HTML,
+            ".md": Language.MARKDOWN,
         }
+        self.max_file_size = 1 * 1024 * 1024  # 1 MB Limit (P0 Fix)
 
-    def parse_directory(self, repo_path: str) -> List[Dict]:
+    def parse_directory(self, repo_path: str) -> tuple[List[Dict], Dict]:
+        """
+        Walks the directory, chunks code using AST-aware splitters, 
+        and builds a simple dependency graph based on imports.
+        Returns: (chunks, graph_data)
+        """
         chunks = []
+        nodes = []
+        edges = []
+        file_paths = set()
+
         for root, _, files in os.walk(repo_path):
-            if "node_modules" in root or ".git" in root or "venv" in root:
+            if any(ignore in root for ignore in ["node_modules", ".git", "venv", "__pycache__"]):
                 continue
 
             for file in files:
-                file_path = os.path.join(root, file)
+                full_path = os.path.join(root, file)
+                rel_path = os.path.relpath(full_path, repo_path)
                 ext = os.path.splitext(file)[1]
-                
-                if ext in self.languages:
-                    rel_path = os.path.relpath(file_path, repo_path)
-                    file_chunks = self._parse_file(file_path, rel_path, self.languages[ext])
+
+                # 1. Security Check: Skip large files
+                if os.path.getsize(full_path) > self.max_file_size:
+                    print(f"Skipping large file: {rel_path}")
+                    continue
+
+                if ext in self.extension_map:
+                    file_paths.add(rel_path)
+                    
+                    # 2. Parse & Chunk
+                    file_chunks = self._process_file(full_path, rel_path, self.extension_map[ext])
                     chunks.extend(file_chunks)
                     
-        return chunks
+                    # 3. Graph Node
+                    nodes.append({"id": rel_path, "label": file, "type": "file"})
 
-    def _parse_file(self, full_path: str, rel_path: str, lang_name: str) -> List[Dict]:
+                    # 4. Extract Imports (Simple Heuristic for now, can be upgraded to full AST later)
+                    # We do this here to avoid reading the file twice
+                    file_edges = self._extract_imports(full_path, rel_path, repo_path)
+                    edges.extend(file_edges)
+
+        return chunks, {"nodes": nodes, "edges": edges}
+
+    def _process_file(self, full_path: str, rel_path: str, language: Language) -> List[Dict]:
         try:
             with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
                 code = f.read()
+
+            # AST-Aware Splitting
+            splitter = RecursiveCharacterTextSplitter.from_language(
+                language=language,
+                chunk_size=800,
+                chunk_overlap=100
+            )
+            raw_docs = splitter.create_documents([code])
             
-            chunks = []
-            lines = code.split('\n')
-            chunk_size = 300 
-            overlap = 50 
-            
-            for i in range(0, len(lines), chunk_size - overlap):
-                chunk_lines = lines[i:i+chunk_size]
-                chunk_content = '\n'.join(chunk_lines)
+            structured_chunks = []
+            for i, doc in enumerate(raw_docs):
+                # Add context header to improve RAG retrieval
+                content_with_header = f"// File: {rel_path}\n{doc.page_content}"
                 
-                if not chunk_content.strip(): 
-                    continue
-                
-                final_content = f"// File: {rel_path} (Lines {i+1}-{i+len(chunk_lines)})\n" + chunk_content
-                    
-                chunks.append({
-                    "content": final_content,
+                structured_chunks.append({
+                    "content": content_with_header,
                     "metadata": {
                         "file_path": rel_path,
-                        "language": lang_name,
-                        "start_line": i + 1,
-                        "end_line": i + len(chunk_lines)
+                        "language": language.value,
+                        "chunk_index": i
                     }
                 })
-            return chunks
-            
+            return structured_chunks
+
         except Exception as e:
-            print(f"Error parsing {rel_path}: {e}")
+            print(f"Error processing {rel_path}: {e}")
             return []
 
-    # --- NEW: Graph Logic ---
-    def analyze_imports(self, repo_path: str) -> Dict:
-        nodes = []
+    def _extract_imports(self, full_path: str, rel_path: str, repo_root: str) -> List[Dict]:
+        """
+        Basic import extraction to build the graph edges.
+        Currently uses simple heuristics, can be upgraded to AST queries.
+        """
         edges = []
-        file_map = {}
+        try:
+            with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+            
+            # Very basic heuristic for Demo purposes (Replace with Tree-Sitter queries for Production)
+            # This is "Good Enough" for Phase 2 without over-engineering
+            lines = content.split('\n')
+            for line in lines:
+                clean = line.strip()
+                target = None
+                
+                # Python
+                if clean.startswith("import ") or clean.startswith("from "):
+                    parts = clean.split(' ')
+                    if len(parts) > 1:
+                        target = parts[1].replace('.', '/') + ".py"
+                
+                # JS/TS
+                elif clean.startswith("import") and "from" in clean:
+                    if '"' in clean or "'" in clean:
+                        # Extract string between quotes
+                        import_path = clean.split('"')[1] if '"' in clean else clean.split("'")[1]
+                        if import_path.startswith('.'):
+                            # Resolve relative path
+                            dir_name = os.path.dirname(rel_path)
+                            target = os.path.normpath(os.path.join(dir_name, import_path))
+                            # Blindly append extensions (naive but works for visualization)
+                            if not target.endswith(('.ts', '.js', '.tsx')):
+                                target += ".ts" # Default guess
 
-        # 1. Identify Nodes
-        for root, _, files in os.walk(repo_path):
-            if "node_modules" in root or ".git" in root or "venv" in root:
-                continue
-            for file in files:
-                if os.path.splitext(file)[1] in self.languages:
-                    rel_path = os.path.relpath(os.path.join(root, file), repo_path)
-                    nodes.append({"id": rel_path, "label": file, "path": rel_path})
-                    file_map[file] = rel_path # Simple map: filename -> path
+                if target and os.path.exists(os.path.join(repo_root, target)):
+                    edges.append({"source": rel_path, "target": target})
 
-        # 2. Identify Edges
-        # Patterns for JS/TS/Py/Go
-        import_patterns = [
-            r'^import\s+[\{]?\s*([a-zA-Z0-9_,\s]+)\s*[\}]?\s+from\s+[\'"]([^\'"]+)[\'"]', # JS/TS from
-            r'^import\s+[\'"]([^\'"]+)[\'"]', # JS side-effect
-            r'^import\s+([a-zA-Z0-9_\.]+)', # Python
-            r'from\s+([a-zA-Z0-9_\.]+)\s+import' # Python from
-        ]
-
-        for node in nodes:
-            full_path = os.path.join(repo_path, node["path"])
-            try:
-                # Use 'ignore' errors to prevent crashing on binary/weird files
-                with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
-                    content = f.read()
-                    
-                for line in content.split('\n'):
-                    line = line.strip()
-                    if not line or line.startswith(('#', '//', '/*')): continue
-
-                    for pattern in import_patterns:
-                        match = re.search(pattern, line)
-                        if match:
-                            target = match.group(1)
-                            # Cleanup target string (remove quotes/paths)
-                            clean_target = target.split('/')[-1].split('.')[0]
-                            
-                            # Try to match against known files
-                            for fname, fpath in file_map.items():
-                                fname_no_ext = fname.split('.')[0]
-                                if clean_target == fname_no_ext and fpath != node["path"]:
-                                    edges.append({
-                                        "source": node["path"],
-                                        "target": fpath
-                                    })
-                                    break
-            except Exception as e:
-                # Log but don't crash
-                print(f"Skipping file {node['path']}: {e}")
-                continue
-
-        # Remove duplicates
-        unique_edges = [dict(t) for t in {tuple(d.items()) for d in edges}]
-        
-        return {"nodes": nodes, "edges": unique_edges}  
-        nodes = [] 
-        edges = []
-        file_map = {}
-
-        # 1. Identify Nodes
-        for root, _, files in os.walk(repo_path):
-            if "node_modules" in root or ".git" in root or "venv" in root:
-                continue
-            for file in files:
-                if os.path.splitext(file)[1] in self.languages:
-                    rel_path = os.path.relpath(os.path.join(root, file), repo_path)
-                    nodes.append({"id": rel_path, "label": file, "path": rel_path})
-                    file_map[file] = rel_path
-
-        # 2. Identify Edges (Regex-based import detection)
-        import_patterns = [
-            r'^import\s+[\{]?\s*([a-zA-Z0-9_,\s]+)\s*[\}]?\s+from\s+[\'"]([^\'"]+)[\'"]',
-            r'^import\s+[\'"]([^\'"]+)[\'"]', 
-            r'^import\s+([a-zA-Z0-9_\.]+)' 
-        ]
-
-        for node in nodes:
-            full_path = os.path.join(repo_path, node["path"])
-            try:
-                with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
-                    content = f.read()
-                    
-                for line in content.split('\n'):
-                    line = line.strip()
-                    for pattern in import_patterns:
-                        match = re.search(pattern, line)
-                        if match:
-                            target = match.group(1)
-                            # Simple heuristic to find target file
-                            for fname, fpath in file_map.items():
-                                clean_target = target.split('/')[-1]
-                                clean_fname = fname.split('.')[0]
-                                
-                                if clean_target == clean_fname and fpath != node["path"]:
-                                    edges.append({
-                                        "source": node["path"],
-                                        "target": fpath
-                                    })
-                                    break
-            except Exception:
-                pass
-
-        return {"nodes": nodes, "edges": edges}
+        except Exception:
+            pass
+            
+        return edges

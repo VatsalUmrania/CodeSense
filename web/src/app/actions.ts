@@ -27,10 +27,8 @@
 //         return { error: "Invalid credentials" };
 //     }
 
-//     // Create session
 //     const expires = new Date(Date.now() + 24 * 60 * 60 * 1000);
 //     const session = await encrypt({ user: { id: user.id, email: user.email }, expires });
-
 //     (await cookies()).set("session", session, { expires, httpOnly: true });
 //   } catch (e) {
 //       return { error: "Login failed" };
@@ -54,10 +52,8 @@
 //         data: { email, password: hashedPassword }
 //     });
 
-//     // Auto login
 //     const expires = new Date(Date.now() + 24 * 60 * 60 * 1000);
 //     const session = await encrypt({ user: { id: user.id, email: user.email }, expires });
-
 //     (await cookies()).set("session", session, { expires, httpOnly: true });
 //   } catch (e) {
 //       return { error: "Registration failed" };
@@ -68,7 +64,6 @@
 
 // export async function logout() {
 //   (await cookies()).set("session", "", { expires: new Date(0) });
-//   // We do NOT redirect here anymore to allow the client to update state first
 //   return { success: true };
 // }
 
@@ -76,14 +71,9 @@
 
 // export async function getOrCreateRepository(url: string, name: string) {
 //   try {
-//     let repo = await prisma.repository.findUnique({
-//       where: { url },
-//     });
-
+//     let repo = await prisma.repository.findUnique({ where: { url } });
 //     if (!repo) {
-//       repo = await prisma.repository.create({
-//         data: { url, name },
-//       });
+//       repo = await prisma.repository.create({ data: { url, name } });
 //     }
 //     return repo;
 //   } catch (error) {
@@ -92,42 +82,17 @@
 //   }
 // }
 
-// // --- SESSION ACTIONS ---
-
-// export async function createChatSession(repositoryId: string) {
-//   const user = await getCurrentUser();
-  
-//   try {
-//     const session = await prisma.chatSession.create({
-//       data: {
-//         repositoryId,
-//         title: "New Chat",
-//         userId: user?.id || null, // Link user if logged in
-//       },
-//     });
-//     return session;
-//   } catch (error) {
-//     console.error("Failed to create session:", error);
-//     return null;
-//   }
-// }
+// // --- SESSION & MESSAGE ACTIONS ---
 
 // export async function getChatSessions(repositoryId: string) {
 //   const user = await getCurrentUser();
-  
-//   // Anonymous users don't see history (privacy/complexity trade-off)
 //   if (!user) return [];
 
 //   try {
 //     return await prisma.chatSession.findMany({
-//       where: { 
-//           repositoryId,
-//           userId: user.id 
-//       },
+//       where: { repositoryId, userId: user.id },
 //       orderBy: { updatedAt: "desc" },
-//       include: {
-//         _count: { select: { messages: true } }
-//       }
+//       include: { _count: { select: { messages: true } } }
 //     });
 //   } catch (error) {
 //     return [];
@@ -137,11 +102,8 @@
 // export async function deleteChatSession(sessionId: string) {
 //     try {
 //         const user = await getCurrentUser();
-//         if (!user) return false; // Only logged in users can delete
-
-//         await prisma.chatSession.delete({ 
-//             where: { id: sessionId, userId: user.id } 
-//         });
+//         if (!user) return false;
+//         await prisma.chatSession.delete({ where: { id: sessionId, userId: user.id } });
 //         revalidatePath("/");
 //         return true;
 //     } catch (e) {
@@ -149,11 +111,8 @@
 //     }
 // }
 
-// // --- MESSAGE ACTIONS (With Limit Check) ---
-
 // export async function getChatMessages(sessionId: string) {
 //   try {
-//     // In a real app, verify user owns session here
 //     return await prisma.message.findMany({
 //       where: { chatSessionId: sessionId },
 //       orderBy: { createdAt: "asc" },
@@ -164,72 +123,62 @@
 // }
 
 // export async function saveMessage(
-//   sessionId: string, 
+//   sessionId: string | null, // Allow null for new sessions
 //   role: "user" | "assistant", 
-//   content: string
+//   content: string,
+//   repositoryId?: string // Required if creating new session
 // ) {
 //   const user = await getCurrentUser();
+//   let currentSessionId = sessionId;
 
-//   // --- LIMIT CHECK ---
-//   if (role === "user" && !user) {
-//       const count = await prisma.message.count({
-//           where: { 
-//               chatSessionId: sessionId,
-//               role: "user"
-//           }
-//       });
+//   // 1. Lazy Creation: Create Session if it doesn't exist
+//   if (!currentSessionId) {
+//       if (!repositoryId) return { error: "Missing repository ID" };
       
-//       if (count >= 3) {
-//           return { error: "LIMIT_REACHED" };
+//       try {
+//           const newSession = await prisma.chatSession.create({
+//               data: {
+//                   repositoryId,
+//                   title: role === "user" ? content.slice(0, 40) + (content.length > 40 ? "..." : "") : "New Chat",
+//                   userId: user?.id || null,
+//               }
+//           });
+//           currentSessionId = newSession.id;
+//       } catch (e) {
+//           return { error: "Failed to create session" };
 //       }
 //   }
 
+//   // 2. Limit Check (Anonymous)
+//   if (role === "user" && !user) {
+//       const count = await prisma.message.count({
+//           where: { chatSessionId: currentSessionId, role: "user" }
+//       });
+//       if (count >= 3) return { error: "LIMIT_REACHED" };
+//   }
+
+//   // 3. Save Message
 //   try {
 //     const message = await prisma.message.create({
 //       data: {
-//         chatSessionId: sessionId,
+//         chatSessionId: currentSessionId,
 //         role,
 //         content,
 //       },
 //     });
 
-//     // --- Auto-Title Update ---
-//     if (role === "user") {
-//         const session = await prisma.chatSession.findUnique({
-//             where: { id: sessionId },
-//             select: { title: true, _count: { select: { messages: true } } }
-//         });
+//     // Update timestamp
+//     await prisma.chatSession.update({
+//         where: { id: currentSessionId },
+//         data: { updatedAt: new Date() }
+//     });
 
-//         // If first message, generate title
-//         if (session && (session.title === "New Chat" || session._count.messages <= 2)) {
-//             const cleanContent = content.replace(/\n/g, " ").trim();
-//             let newTitle = cleanContent.slice(0, 30);
-//             if (cleanContent.length > 30) newTitle += "...";
-            
-//             await prisma.chatSession.update({
-//                 where: { id: sessionId },
-//                 data: { title: newTitle, updatedAt: new Date() }
-//             });
-//         } else {
-//             await prisma.chatSession.update({
-//                 where: { id: sessionId },
-//                 data: { updatedAt: new Date() }
-//             });
-//         }
-//     } else {
-//          // Assistant message just updates timestamp
-//          await prisma.chatSession.update({
-//             where: { id: sessionId },
-//             data: { updatedAt: new Date() }
-//         });
-//     }
-
-//     return message;
+//     return { message, sessionId: currentSessionId }; // Return new ID
 //   } catch (error) {
-//     console.error("Failed to save message:", error);
 //     return null;
 //   }
 // }
+
 
 "use server";
 
@@ -315,6 +264,26 @@ export async function getOrCreateRepository(url: string, name: string) {
   }
 }
 
+export async function deleteRepository(repoId: string) {
+    const user = await getCurrentUser();
+    if (!user) return { error: "Unauthorized" };
+
+    try {
+        // 1. Delete from PostgreSQL (Brain A)
+        await prisma.repository.delete({ where: { id: repoId } });
+
+        // 2. Trigger Background Cleanup (Brain B Sync)
+        const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        await fetch(`${API_URL}/repo/${repoId}`, { method: "DELETE" });
+
+        revalidatePath("/");
+        return { success: true };
+    } catch (e) {
+        console.error("Delete Repo Error:", e);
+        return { error: "Failed to delete repository" };
+    }
+}
+
 // --- SESSION & MESSAGE ACTIONS ---
 
 export async function getChatSessions(repositoryId: string) {
@@ -380,6 +349,11 @@ export async function saveMessage(
       } catch (e) {
           return { error: "Failed to create session" };
       }
+  }
+
+  // --- TYPE FIX: Ensure we have a string ID ---
+  if (!currentSessionId) {
+      return { error: "Failed to initialize session ID" };
   }
 
   // 2. Limit Check (Anonymous)

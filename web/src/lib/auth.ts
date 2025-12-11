@@ -2,8 +2,13 @@ import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
-const secretKey = "secret-key-change-this-in-prod";
-const key = new TextEncoder().encode(secretKey);
+// Fail hard if secret missing in production
+const SECRET_KEY = process.env.JWT_SECRET;
+if (!SECRET_KEY && process.env.NODE_ENV === "production") {
+  throw new Error("JWT_SECRET is not defined");
+}
+
+const key = new TextEncoder().encode(SECRET_KEY || "dev-fallback-secret-do-not-use-in-prod");
 
 export async function encrypt(payload: any) {
   return await new SignJWT(payload)
@@ -13,32 +18,42 @@ export async function encrypt(payload: any) {
     .sign(key);
 }
 
-export async function decrypt(input: string): Promise<any> {
-  const { payload } = await jwtVerify(input, key, {
-    algorithms: ["HS256"],
-  });
-  return payload;
+export async function decrypt(token: string): Promise<any> {
+  try {
+    const { payload } = await jwtVerify(token, key, {
+      algorithms: ["HS256"],
+    });
+    return payload;
+  } catch {
+    return null;
+  }
 }
 
 export async function getSession() {
-  const session = (await cookies()).get("session")?.value;
-  if (!session) return null;
-  return await decrypt(session);
+  const cookieStore = cookies();
+  const sessionToken = (await cookieStore).get("session")?.value;
+  if (!sessionToken) return null;
+
+  return await decrypt(sessionToken);
 }
 
 export async function updateSession(request: NextRequest) {
-  const session = request.cookies.get("session")?.value;
-  if (!session) return;
+  const sessionToken = request.cookies.get("session")?.value;
+  if (!sessionToken) return;
 
-  // Refresh session expiration
-  const parsed = await decrypt(session);
-  parsed.expires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const parsed = await decrypt(sessionToken);
+  if (!parsed) return;
+
+  const refreshedToken = await encrypt({ ...parsed });
+
   const res = NextResponse.next();
   res.cookies.set({
     name: "session",
-    value: await encrypt(parsed),
+    value: refreshedToken,
     httpOnly: true,
-    expires: parsed.expires,
+    path: "/",
+    maxAge: 60 * 60 * 24, // 24h
   });
+
   return res;
 }
