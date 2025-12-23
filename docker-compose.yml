@@ -30,7 +30,7 @@ services:
       - QDRANT_URL=http://qdrant:6333
       - PYTHONPATH=/app
       - GOOGLE_API_KEY=${GOOGLE_API_KEY} 
-      - BACKEND_CORS_ORIGINS=["http://localhost:3000","http://localhost:5555"]
+      - BACKEND_CORS_ORIGINS=["http://localhost:3000","http://localhost:5555","http://127.0.0.1:3000"]
     depends_on:
       - redis
       - minio
@@ -43,18 +43,29 @@ services:
       context: ./backend_v2
       dockerfile: worker.Dockerfile
     container_name: codesense-worker
+    # 1. ADD THIS: Load shared variables (SECRET_KEY, AUTH_ISSUER, etc.)
+    env_file:
+      - .env
     environment:
+        # 2. KEEP EXISTING: Queue config
         - CELERY_BROKER_URL=redis://redis:6379/0
         - CELERY_RESULT_BACKEND=redis://redis:6379/0
-        - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+        
+        # 3. ADD MISSING: Database & Services (Must match 'api' service)
+        - DATABASE_URL=postgresql://codesense:securepassword@postgres:5432/codesense_db
+        - QDRANT_URL=http://qdrant:6333
         - MINIO_ENDPOINT=minio:9000
+        - MINIO_URL=http://minio:9000  # Explicitly adding this since Pydantic asked for it
         - MINIO_ACCESS_KEY=minioadmin
         - MINIO_SECRET_KEY=minioadmin
+        - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+        - PYTHONPATH=/app
     dns:
       - 8.8.8.8
       - 8.8.4.4
     depends_on:
       - redis
+      - postgres
 
   # --- Database & Queue Infrastructure ---
   redis:

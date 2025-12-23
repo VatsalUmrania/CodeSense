@@ -4,32 +4,33 @@ from typing import Any
 import uuid
 
 from app.api import deps
-from app.db.session import get_db
+from app.api.deps import get_db
 from app.models.user import User, RepoAccess
 from app.models.repository import Repository, IngestionRun
 from app.models.enums import RepoRole, IngestionStatus
 from app.schemas.ingestion import IngestRepoRequest, IngestResponse, IngestionStatusResponse
 from app.services.ingestion.coordinator import IngestionCoordinator
 from app.services.ingestion.cloner import GitCloner
+from app.services.identity import get_or_create_user
 
 router = APIRouter()
 
 @router.post("/", response_model=IngestResponse)
 def ingest_repository(
     request: IngestRepoRequest,
-    current_user: User = Depends(deps.get_current_user),
+    auth: deps.AuthContext = Depends(deps.get_current_user),
     db: Session = Depends(get_db),
-    coordinator: IngestionCoordinator = Depends(deps.get_ingestion_coordinator), # Fixed: Injection
+    coordinator: IngestionCoordinator = Depends(deps.get_ingestion_coordinator),
 ) -> Any:
-    # 1. Parse & Resolve SHA (Synchronous Check)
     try:
         provider, owner, name = GitCloner.parse_url(str(request.repo_url))
-        commit_sha = GitCloner.get_remote_head(str(request.repo_url)) # Fixed: No "HEAD"
+        commit_sha = GitCloner.get_remote_head(str(request.repo_url))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # 2. Upsert Repository (Optimistic Lock Pattern)
-    # We check if it exists to avoid unique constraint violations
+    # Sync User (Write Op)
+    user = get_or_create_user(db, auth["clerk_id"])
+
     repo = db.exec(select(Repository).where(
         Repository.provider == provider,
         Repository.owner == owner,
@@ -43,31 +44,29 @@ def ingest_repository(
             name=name,
             is_private=request.is_private,
             default_branch=request.branch or "main",
-            latest_commit_sha=commit_sha # Initialize with current
+            latest_commit_sha=commit_sha
         )
         db.add(repo)
         db.commit()
         db.refresh(repo)
         
-        # Fixed: Grant Ownership immediately
+        # Grant Ownership
         access = RepoAccess(
-            user_id=current_user.id,
+            user_id=user.id,
             repo_id=repo.id,
             role=RepoRole.OWNER
         )
         db.add(access)
         db.commit()
     else:
-        # If repo exists, ensure user has access (or add them if public? logic varies)
-        # For now, we enforce they must have access to re-trigger
+        # Check existing access
         access = db.exec(select(RepoAccess).where(
             RepoAccess.repo_id == repo.id,
-            RepoAccess.user_id == current_user.id
+            RepoAccess.user_id == user.id
         )).first()
         if not access:
-             raise HTTPException(status_code=403, detail="You do not have permission to re-index this repository.")
+             raise HTTPException(status_code=403, detail="Permission denied to re-index.")
     
-    # 3. Start Ingestion using Concrete SHA
     run_id = coordinator.start_ingestion(repo.id, commit_sha)
 
     return IngestResponse(
@@ -80,17 +79,18 @@ def ingest_repository(
 @router.get("/{run_id}", response_model=IngestionStatusResponse)
 def get_ingestion_status(
     run_id: uuid.UUID,
-    current_user: User = Depends(deps.get_current_user),
+    auth: deps.AuthContext = Depends(deps.get_current_user),
     db: Session = Depends(get_db),
 ) -> Any:
-    # Fixed: Secure Status Polling
+    # Secure Status Polling via Join
     statement = (
         select(IngestionRun)
         .join(Repository, IngestionRun.repo_id == Repository.id)
         .join(RepoAccess, Repository.id == RepoAccess.repo_id)
+        .join(User, RepoAccess.user_id == User.id)
         .where(
             IngestionRun.id == run_id,
-            RepoAccess.user_id == current_user.id
+            User.external_id == auth["clerk_id"]
         )
     )
     run = db.exec(statement).first()

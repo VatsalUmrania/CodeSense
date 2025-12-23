@@ -2,23 +2,26 @@ import React, { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { Copy, Check, FileText, ChevronDown, BookOpen, Terminal } from "lucide-react";
+import { Copy, Check, Terminal, FileText, ChevronRight } from "lucide-react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import type { components } from "@/lib/api/types";
+
+// Type alias for easier usage
+type ChunkCitation = components["schemas"]["ChunkCitation"];
 
 interface MessageProps {
   role: string;
   content: string;
-  sources?: { file: string; code: string }[];
+  citations?: ChunkCitation[];
   user?: { email: string } | null;
-  onSourceClick?: (file: string) => void;
+  onCitationClick?: (citation: ChunkCitation) => void;
 }
 
-export function MessageBubble({ role, content, sources, user, onSourceClick }: MessageProps) {
+export function MessageBubble({ role, content, citations, user, onCitationClick }: MessageProps) {
   const isUser = role === "user";
   const [copied, setCopied] = useState(false);
-  const [isExpanded, setIsExpanded] = useState(false);
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -26,83 +29,61 @@ export function MessageBubble({ role, content, sources, user, onSourceClick }: M
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const displaySources = isExpanded ? sources : sources?.slice(0, 3);
-  const remainingCount = (sources?.length || 0) - 3;
-
-  const userInitial = user?.email?.[0]?.toUpperCase() || "U";
-
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className={cn(
-        "flex w-full mb-8 gap-3",
-        isUser ? "justify-end" : "justify-start"
-      )}
+      className={cn("flex w-full mb-8 gap-4", isUser ? "flex-row-reverse" : "flex-row")}
     >
-      {!isUser && (
-        <div className="w-8 h-8 shrink-0 flex items-center justify-center mt-1">
-          <img src="/logo.svg" alt="AI" className="w-8 h-8" />
-        </div>
-      )}
+      {/* Avatar */}
+      <Avatar className="h-8 w-8 shrink-0 border border-border mt-1">
+        {isUser ? (
+           <AvatarFallback className="bg-primary text-primary-foreground text-xs">{user?.email?.[0] || "U"}</AvatarFallback>
+        ) : (
+           <div className="w-full h-full bg-black flex items-center justify-center">
+             <img src="/logo.svg" className="w-5 h-5" alt="AI" />
+           </div>
+        )}
+      </Avatar>
 
-      <div className={cn(
-        "flex flex-col max-w-[85%] md:max-w-[75%]",
-        isUser ? "items-end" : "items-start"
-      )}>
+      <div className={cn("flex flex-col max-w-[85%] lg:max-w-[75%]", isUser ? "items-end" : "items-start")}>
+        
+        {/* User/AI Name Label */}
+        <span className="text-[10px] font-medium text-muted-foreground mb-1 ml-1 opacity-70">
+            {isUser ? "You" : "CodeSense"}
+        </span>
 
         <div className={cn(
-          "px-5 py-3.5 rounded-2xl text-sm leading-relaxed shadow-sm",
+          "px-5 py-4 rounded-xl text-sm leading-7 shadow-sm border",
           isUser
-            ? "bg-primary text-primary-foreground rounded-tr-sm"
-            : "bg-card border border-border text-card-foreground rounded-tl-sm"
+            ? "bg-primary text-primary-foreground border-primary"
+            : "bg-card text-card-foreground border-border/60"
         )}>
           <ReactMarkdown
             components={{
-              // --- NEW: Custom Link Renderer to Open Files ---
-              a({ node, href, children, ...props }) {
-                return (
-                  <span
-                    onClick={() => href && onSourceClick?.(href)}
-                    className="text-primary hover:underline cursor-pointer font-medium inline-flex items-center gap-1"
-                    title={`Open ${href}`}
-                  >
-                    <FileText className="w-3 h-3 inline" />
-                    {children}
-                  </span>
-                );
-              },
-              // -----------------------------------------------
               code({ node, inline, className, children, ...props }: any) {
                 const match = /language-(\w+)/.exec(className || "");
                 const codeString = String(children).replace(/\n$/, "");
-
                 return !inline && match ? (
-                  <div className="rounded-md overflow-hidden my-3 border border-border/50 shadow-sm bg-secondary">
-                    <div className="flex items-center justify-between px-3 py-1.5 bg-primary-foreground border-b border-[#333] text-primary-foreground">
-                      <div className="flex items-center gap-2">
-                        <Terminal className="w-3 h-3 opacity-50" />
-                        <span className="font-mono text-[10px] opacity-70">{match[1]}</span>
-                      </div>
-                      <button onClick={() => copyToClipboard(codeString)}>
-                        {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3 opacity-50 hover:opacity-100" />}
+                  <div className="rounded-md overflow-hidden my-4 border border-border/40 bg-muted/30">
+                    <div className="flex items-center justify-between px-3 py-1.5 bg-muted/50 border-b border-border/40">
+                      <span className="font-mono text-[10px] text-muted-foreground">{match[1]}</span>
+                      <button onClick={() => copyToClipboard(codeString)} className="hover:text-foreground text-muted-foreground">
+                        {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
                       </button>
                     </div>
                     <SyntaxHighlighter
                       style={oneLight}
                       language={match[1]}
                       PreTag="div"
-                      customStyle={{ margin: 0, padding: '1rem', fontSize: '12px' }}
+                      customStyle={{ margin: 0, padding: '1rem', background: 'transparent', fontSize: '12px' }}
                       {...props}
                     >
                       {codeString}
                     </SyntaxHighlighter>
                   </div>
                 ) : (
-                  <code className={cn(
-                    "px-1 py-0.5 rounded font-mono text-[11px]",
-                    isUser ? "bg-primary-foreground/20" : "bg-muted text-foreground"
-                  )} {...props}>
+                  <code className="px-1.5 py-0.5 rounded bg-muted/50 font-mono text-[11px] border border-border/50" {...props}>
                     {children}
                   </code>
                 );
@@ -113,56 +94,37 @@ export function MessageBubble({ role, content, sources, user, onSourceClick }: M
           </ReactMarkdown>
         </div>
 
-        {/* References Section */}
-        {!isUser && sources && sources.length > 0 && (
-          <div className="mt-3 w-full animate-in fade-in slide-in-from-top-2 duration-500">
-            <div className="flex items-center gap-2 mb-2">
-              <BookOpen className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-xs font-medium text-muted-foreground">References</span>
+        {/* --- CITATIONS GRID --- */}
+        {!isUser && citations && citations.length > 0 && (
+            <div className="mt-3 w-full grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {citations.map((cite, i) => (
+                    <button
+                        key={i}
+                        onClick={() => onCitationClick?.(cite)}
+                        className="flex items-center gap-3 p-2 rounded-lg border border-border/50 bg-background/50 hover:bg-accent/50 hover:border-primary/20 transition-all text-left group"
+                    >
+                        <div className="h-8 w-8 rounded-md bg-muted flex items-center justify-center shrink-0 group-hover:bg-background transition-colors border border-border/30">
+                             <FileText className="w-4 h-4 text-muted-foreground group-hover:text-primary" />
+                        </div>
+                        <div className="flex flex-col min-w-0 flex-1">
+                             <span className="text-xs font-medium truncate text-foreground/80 group-hover:text-primary">
+                                {cite.file_path.split('/').pop()}
+                             </span>
+                             <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                                <span className="font-mono">L{cite.start_line}</span>
+                                <span className="w-1 h-1 rounded-full bg-border" />
+                                <span className="truncate opacity-70">
+                                    {cite.symbol_name || "Context"}
+                                </span>
+                             </div>
+                        </div>
+                        <ChevronRight className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 -ml-2 transition-opacity" />
+                    </button>
+                ))}
             </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-              {displaySources?.map((source, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => onSourceClick?.(source.file)}
-                  className="group flex items-center gap-2 text-xs text-left bg-card hover:bg-accent/50 border border-border p-2 rounded-lg transition-all hover:shadow-sm hover:border-primary/30"
-                >
-                  <div className="p-1.5 bg-muted rounded-md group-hover:bg-background transition-colors">
-                    <FileText className="w-3.5 h-3.5 text-muted-foreground group-hover:text-primary" />
-                  </div>
-                  <div className="flex flex-col min-w-0">
-                    <span className="truncate font-medium text-foreground/80 group-hover:text-primary">
-                      {source.file.split('/').pop()}
-                    </span>
-                    <span className="truncate text-[10px] text-muted-foreground opacity-70">
-                      {source.file}
-                    </span>
-                  </div>
-                </button>
-              ))}
-            </div>
-
-            {remainingCount > 0 && !isExpanded && (
-              <button
-                onClick={() => setIsExpanded(true)}
-                className="mt-2 text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 font-medium ml-1"
-              >
-                Show {remainingCount} more <ChevronDown className="w-3 h-3" />
-              </button>
-            )}
-          </div>
         )}
-      </div>
 
-      {isUser && (
-        <Avatar className="h-8 w-8 shrink-0 border border-primary/20 mt-1">
-          <AvatarImage src="" />
-          <AvatarFallback className="bg-primary text-primary-foreground text-xs font-bold">
-            {userInitial}
-          </AvatarFallback>
-        </Avatar>
-      )}
+      </div>
     </motion.div>
   );
 }

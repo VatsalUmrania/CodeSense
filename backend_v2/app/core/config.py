@@ -1,6 +1,6 @@
 import os
-from typing import List
-from pydantic import AnyHttpUrl, PostgresDsn
+from typing import List, Union
+from pydantic import AnyHttpUrl, PostgresDsn, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -8,32 +8,46 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     
     # SECURITY & AUTH
-    SECRET_KEY: str  # For internal signing if needed
+    SECRET_KEY: str  
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8
-    # If using Clerk, this is the Issuer URL (e.g., https://clerk.codesense.com)
     AUTH_ISSUER: str 
     AUTH_AUDIENCE: str = "codesense-api" 
     
     # CORS
     BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = []
 
-    # DATABASE (Postgres)
+    @field_validator("BACKEND_CORS_ORIGINS", mode="before")
+    @classmethod
+    def assemble_cors_origins(cls, v: Union[str, List[str]]) -> Union[List[str], str]:
+        if isinstance(v, str) and not v.startswith("["):
+            return [i.strip() for i in v.split(",")]
+        elif isinstance(v, (list, str)):
+            return v
+        raise ValueError(v)
+
+    # DATABASE
     DATABASE_URL: PostgresDsn
 
-    # STORAGE (MinIO / S3)
+    # STORAGE
     MINIO_URL: str
     MINIO_ACCESS_KEY: str
     MINIO_SECRET_KEY: str
     MINIO_BUCKET_NAME: str = "codesense-lakehouse"
+    MINIO_ENDPOINT: str = "minio:9000"
 
-    # VECTOR DB (Qdrant)
+    # VECTOR DB
     QDRANT_URL: str
     QDRANT_API_KEY: str | None = None
 
-    # LLM (Gemini)
+    # LLM
     GOOGLE_API_KEY: str
 
-    # REDIS & CELERY
+    # --- FIX: ADD CELERY CONFIG HERE ---
+    # These were missing, causing the AttributeError
+    CELERY_BROKER_URL: str = "redis://redis:6379/0"
+    CELERY_RESULT_BACKEND: str = "redis://redis:6379/0"
+
+    # REDIS (General usage)
     REDIS_URL: str = "redis://redis:6379/0"
 
     # OBSERVABILITY

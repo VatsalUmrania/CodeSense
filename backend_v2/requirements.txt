@@ -67,7 +67,7 @@ tree-sitter-languages==1.10.0
 msgpack==1.0.7
 structlog==24.1.0
 requests==2.31.0
-
+minio
 # Testing
 pytest==8.0.0
 httpx==0.27.0

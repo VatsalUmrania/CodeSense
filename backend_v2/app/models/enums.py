@@ -8,6 +8,7 @@ class RepoRole(str, Enum):
 class RepoProvider(str, Enum):
     GITHUB = "github"
     GITLAB = "gitlab"
+    BITBUCKET = "bitbucket"
 
 class MessageRole(str, Enum):
     USER = "user"
