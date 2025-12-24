@@ -6,7 +6,8 @@ import uuid
 from app.api import deps
 from app.api.deps import get_db
 from app.models.user import User
-from app.models.chat import ChatSession, Message
+# FIX 1: Removed trailing comma and ensured we only import ChatMessage
+from app.models.chat import ChatSession, ChatMessage
 from app.models.repository import Repository
 from app.schemas.chat import (
     ChatSessionCreate, 
@@ -107,10 +108,11 @@ def get_history(
     if not session:
         raise HTTPException(status_code=403, detail="Session not found or unauthorized")
         
+    # FIX 2: Changed 'Message' to 'ChatMessage' to match your model definition
     statement = (
-        select(Message)
-        .where(Message.session_id == session_id)
-        .order_by(Message.created_at.asc())
+        select(ChatMessage)
+        .where(ChatMessage.session_id == session_id)
+        .order_by(ChatMessage.created_at.asc())
         .offset(skip)
         .limit(limit)
     )

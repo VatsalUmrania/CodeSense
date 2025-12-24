@@ -264,7 +264,7 @@ interface SidebarProps {
   onClear: () => void;
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/v1";
 
 export function AppSidebar({
   isCollapsed,

@@ -1,5 +1,5 @@
 from sqlmodel import Session
-from app.models.chat import ChatSession, Message, MessageChunk
+from app.models.chat import ChatSession, ChatMessage, MessageChunk
 from app.models.enums import MessageRole
 from app.schemas.chat import MessageResponse, ChunkCitation
 from typing import List, Any

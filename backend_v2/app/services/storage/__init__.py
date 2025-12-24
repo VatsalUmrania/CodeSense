@@ -1,4 +1,3 @@
-import os
 import io
 from enum import Enum
 from minio import Minio
@@ -26,16 +25,19 @@ class StoragePaths:
 # 3. Define the Storage Service (MinIO Implementation)
 class StorageService:
     def __init__(self):
-        # Initialize MinIO Client using settings from config
+        # --- FIX: DEFINE 'endpoint' VARIABLE FIRST ---
+        # Strip http/https because MinIO client expects "host:port"
+        endpoint = settings.MINIO_URL.replace("http://", "").replace("https://", "")
+
+        # --- NOW USE IT ---
         self.client = Minio(
-            endpoint=endpoint,
+            endpoint=endpoint,  # <--- Now this variable exists!
             access_key=settings.MINIO_ACCESS_KEY,
             secret_key=settings.MINIO_SECRET_KEY,
-            secure=False,  # False for local/http
+            secure=False,
         )
         self.bucket_name = settings.MINIO_BUCKET_NAME
         
-        # Ensure bucket exists
         self._ensure_bucket()
 
     def _ensure_bucket(self):

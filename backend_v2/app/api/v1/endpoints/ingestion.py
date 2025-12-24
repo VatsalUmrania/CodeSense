@@ -4,7 +4,8 @@ from typing import Any
 import uuid
 
 from app.api import deps
-from app.api.deps import get_db
+# Ensure app.api.deps imports get_session as get_db, or use get_session directly
+from app.api.deps import get_db 
 from app.models.user import User, RepoAccess
 from app.models.repository import Repository, IngestionRun
 from app.models.enums import RepoRole, IngestionStatus
@@ -15,22 +16,27 @@ from app.services.identity import get_or_create_user
 
 router = APIRouter()
 
-@router.post("/", response_model=IngestResponse)
+@router.post("", response_model=IngestResponse)
 def ingest_repository(
     request: IngestRepoRequest,
     auth: deps.AuthContext = Depends(deps.get_current_user),
     db: Session = Depends(get_db),
     coordinator: IngestionCoordinator = Depends(deps.get_ingestion_coordinator),
 ) -> Any:
+    """
+    Trigger the ingestion process for a repository.
+    """
     try:
+        # 1. Parse & Validate URL
         provider, owner, name = GitCloner.parse_url(str(request.repo_url))
         commit_sha = GitCloner.get_remote_head(str(request.repo_url))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Sync User (Write Op)
+    # 2. Sync User (Write Op) - Ensure user exists in local DB
     user = get_or_create_user(db, auth["clerk_id"])
 
+    # 3. Find or Create Repository
     repo = db.exec(select(Repository).where(
         Repository.provider == provider,
         Repository.owner == owner,
@@ -38,6 +44,7 @@ def ingest_repository(
     )).first()
 
     if not repo:
+        # Create new repo
         repo = Repository(
             provider=provider,
             owner=owner,
@@ -50,7 +57,7 @@ def ingest_repository(
         db.commit()
         db.refresh(repo)
         
-        # Grant Ownership
+        # Grant Ownership to the user who ingested it
         access = RepoAccess(
             user_id=user.id,
             repo_id=repo.id,
@@ -59,14 +66,15 @@ def ingest_repository(
         db.add(access)
         db.commit()
     else:
-        # Check existing access
+        # Check existing access permissions if repo already exists
         access = db.exec(select(RepoAccess).where(
             RepoAccess.repo_id == repo.id,
             RepoAccess.user_id == user.id
         )).first()
         if not access:
-             raise HTTPException(status_code=403, detail="Permission denied to re-index.")
+             raise HTTPException(status_code=403, detail="Permission denied. You do not have access to re-index this repository.")
     
+    # 4. Start Ingestion Pipeline (Celery Task)
     run_id = coordinator.start_ingestion(repo.id, commit_sha)
 
     return IngestResponse(
@@ -82,7 +90,12 @@ def get_ingestion_status(
     auth: deps.AuthContext = Depends(deps.get_current_user),
     db: Session = Depends(get_db),
 ) -> Any:
+    """
+    Get the status of a specific ingestion run.
+    Validates that the authenticated user has access to the repository.
+    """
     # Secure Status Polling via Join
+    # Only return run if the user has a RepoAccess entry for the related repository
     statement = (
         select(IngestionRun)
         .join(Repository, IngestionRun.repo_id == Repository.id)

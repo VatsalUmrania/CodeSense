@@ -29,13 +29,16 @@ class ChatSession(SQLModel, table=True):
 
     user: "User" = Relationship(back_populates="sessions")
     repository: "Repository" = Relationship(back_populates="sessions")
-    messages: List["Message"] = Relationship(
+    
+    # FIX: Updated type hint to "ChatMessage"
+    messages: List["ChatMessage"] = Relationship(
         back_populates="session",
         sa_relationship_kwargs={"cascade": "all, delete"},
     )
 
 
-class Message(SQLModel, table=True):
+# FIX: Renamed from 'Message' to 'ChatMessage' to match your imports
+class ChatMessage(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     session_id: uuid.UUID = Field(foreign_key="chatsession.id", index=True)
 
@@ -53,10 +56,12 @@ class Message(SQLModel, table=True):
 
 class MessageChunk(SQLModel, table=True):
     """Link table between Messages and Vector Chunks for citation and observability."""
+    # FIX: Updated foreign key to point to 'chatmessage.id'
     message_id: uuid.UUID = Field(
-        foreign_key="message.id", primary_key=True
+        foreign_key="chatmessage.id", primary_key=True
     )
     chunk_id: str = Field(primary_key=True)
     score: Optional[float] = None
 
-    message: "Message" = Relationship(back_populates="chunks")
+    # FIX: Updated relationship type hint
+    message: "ChatMessage" = Relationship(back_populates="chunks")
