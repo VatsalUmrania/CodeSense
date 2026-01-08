@@ -1,51 +1,61 @@
-import hashlib
-from typing import List
-from .models import ParsedElement, Chunk, SymbolType
+import os
 
-class SemanticChunker:
-    def chunk_file(self, file_path: str, code: str, elements: List[ParsedElement]) -> List[Chunk]:
+class ChunkingService:
+    def chunk_repository(self, repo_path: str) -> list[dict]:
+        """
+        Iterates over the repo and chunks supported files.
+        """
         chunks = []
-        
-        # Fallback: If no symbols found (e.g., config file, script), chunk the whole file
-        if not elements:
-            return [self._create_chunk(
-                content=f"// File: {file_path}\n// Type: MODULE\n{code}",
-                file_path=file_path,
-                symbol_name=file_path.split('/')[-1],
-                symbol_type=SymbolType.MODULE
-            )]
+        # Add more extensions as needed
+        supported_extensions = {".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".c", ".cpp", ".md", ".txt"}
 
-        for elem in elements:
-            # Enriched Header with Hierarchy
-            header = f"// File: {file_path}\n// Type: {elem.type.value}\n"
-            if elem.parent_name:
-                header += f"// Context: {elem.parent_name} (Depth: {elem.depth})\n"
-            header += f"// Name: {elem.name}\n"
-            
-            full_content = header + elem.content
-            
-            chunks.append(self._create_chunk(
-                content=full_content,
-                file_path=file_path,
-                symbol_name=elem.name,
-                symbol_type=elem.type,
-                parent=elem.parent_name
-            ))
-            
+        for root, _, files in os.walk(repo_path):
+            for file in files:
+                ext = os.path.splitext(file)[1]
+                if ext not in supported_extensions:
+                    continue
+
+                file_path = os.path.join(root, file)
+                rel_path = os.path.relpath(file_path, repo_path)
+
+                try:
+                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read()
+                        
+                    # Simple Line-based Chunking (every 60 lines with 10 lines overlap)
+                    lines = content.splitlines()
+                    chunk_size = 60
+                    overlap = 10
+                    
+                    if not lines:
+                        continue
+
+                    # Handle small files
+                    if len(lines) <= chunk_size:
+                         chunks.append({
+                            "file_path": rel_path,
+                            "content": content,
+                            "start_line": 1,
+                            "end_line": len(lines)
+                        })
+                         continue
+
+                    # Handle larger files
+                    for i in range(0, len(lines), chunk_size - overlap):
+                        chunk_lines = lines[i : i + chunk_size]
+                        chunk_text = "\n".join(chunk_lines)
+                        
+                        if not chunk_text.strip():
+                            continue
+
+                        chunks.append({
+                            "file_path": rel_path,
+                            "content": chunk_text,
+                            "start_line": i + 1,
+                            "end_line": i + len(chunk_lines)
+                        })
+
+                except Exception as e:
+                    print(f"Error chunking {rel_path}: {e}")
+
         return chunks
-
-    def _create_chunk(self, content: str, file_path: str, symbol_name: str, symbol_type: SymbolType, parent: str = None) -> Chunk:
-        # Stable Hash
-        chunk_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
-        
-        return Chunk(
-            content=content,
-            chunk_id=chunk_hash,
-            metadata={
-                "file_path": file_path,
-                "symbol_name": symbol_name,
-                "symbol_type": symbol_type.value,
-                "parent_symbol": parent,
-                "code_hash": chunk_hash
-            }
-        )

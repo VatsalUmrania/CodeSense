@@ -1,84 +1,85 @@
 import git
-import tempfile
 import os
 import shutil
-from typing import Tuple
-from app.models.enums import RepoProvider
+import tempfile
+import logging
+from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
 
 class GitCloner:
     @staticmethod
-    def parse_url(url: str) -> Tuple[RepoProvider, str, str]:
+    def parse_url(url: str) -> tuple[str, str, str]:
         """
-        Parses https://github.com/owner/name -> (provider, owner, name)
+        Parses a git URL to extract provider, owner, and repo name.
         """
-        clean_url = url.strip()
-        if clean_url.endswith(".git"):
-            clean_url = clean_url[:-4]
+        parsed = urlparse(url)
+        path_parts = parsed.path.strip("/").split("/")
         
-        # Remove protocol
-        if "://" in clean_url:
-            clean_url = clean_url.split("://")[1]
+        if len(path_parts) < 2:
+            raise ValueError("Invalid Repository URL")
             
-        # Split parts (github.com / owner / name)
-        parts = clean_url.split("/")
+        provider = parsed.netloc
+        owner = path_parts[0]
+        name = path_parts[1].replace(".git", "")
         
-        if len(parts) < 3:
-            raise ValueError(f"Invalid repository URL format: {url}")
-            
-        domain = parts[0].lower()
-        owner = parts[1]
-        name = parts[2]
-        
-        # Detect Provider
-        if "gitlab" in domain:
-            provider = RepoProvider.GITLAB
-        else:
-            provider = RepoProvider.GITHUB
-            
         return provider, owner, name
 
     @staticmethod
     def get_remote_head(url: str) -> str:
         """
-        Synchronously fetches the latest commit SHA using git ls-remote.
+        Gets the latest commit SHA from the remote HEAD without cloning.
         """
         g = git.cmd.Git()
         try:
+            # FIX: Use the correct git command syntax
             output = g.ls_remote(url, "HEAD")
             if not output:
-                raise ValueError("Could not resolve HEAD for repository")
-            sha = output.split()[0]
-            return sha
-        except git.Exc as e:
-            raise ValueError(f"Failed to access repository: {str(e)}")
+                raise ValueError("No output from ls-remote")
+            return output.split()[0]
+        # FIX: Correct Exception Class
+        except git.exc.GitCommandError as e:
+            logger.error(f"Git Command Error: {e}")
+            raise ValueError(f"Could not access repository: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected Error checking remote head: {e}")
+            raise ValueError(f"Failed to resolve repository HEAD: {e}")
 
-    # --- ADDED THIS METHOD ---
     @staticmethod
-    def clone_repo(provider: RepoProvider, owner: str, name: str, commit_sha: str) -> str:
+    def clone_repo(provider: str, owner: str, name: str, commit_sha: str) -> str:
         """
-        Clones the repo to a temp folder and checks out the specific SHA.
-        Returns the path to the local directory.
+        Clones the repository to a temporary directory and checks out the specific commit.
+        Returns the local path.
         """
-        # Construct URL based on provider
-        # Note: Ideally handle auth tokens here for private repos
-        if provider == RepoProvider.GITLAB:
-             url = f"https://gitlab.com/{owner}/{name}.git"
+        # FIX: Handle Enum objects if passed directly from DB model
+        if hasattr(provider, "value"):
+            provider = provider.value
+
+        # FIX: Normalize provider to a real domain (DB stores 'github', Git needs 'github.com')
+        provider_str = str(provider).lower()
+        if provider_str == "github":
+            domain = "github.com"
+        elif provider_str == "gitlab":
+            domain = "gitlab.com"
+        elif provider_str == "bitbucket":
+            domain = "bitbucket.org"
         else:
-             url = f"https://github.com/{owner}/{name}.git"
+            # Fallback for when the provider is already a domain (e.g. "github.com")
+            domain = provider
 
-        # Create unique temp dir
-        local_path = tempfile.mkdtemp(prefix=f"codesense_{name}_")
-
+        repo_url = f"https://{domain}/{owner}/{name}.git"
+        temp_dir = tempfile.mkdtemp()
+        
         try:
-            # Clone
-            repo = git.Repo.clone_from(url, local_path)
+            logger.info(f"Cloning {repo_url} to {temp_dir}...")
+            repo = git.Repo.clone_from(repo_url, temp_dir)
             
-            # Checkout specific commit
+            logger.info(f"Checking out commit {commit_sha}...")
             repo.git.checkout(commit_sha)
             
-            return local_path
-        except git.Exc as e:
-            # Clean up if failed
-            if os.path.exists(local_path):
-                shutil.rmtree(local_path)
-            raise RuntimeError(f"Failed to clone {url} at {commit_sha}: {e}")
+            return temp_dir
+        except Exception as e:
+            logger.error(f"Failed to clone repo: {e}")
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+            raise e

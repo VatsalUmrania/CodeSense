@@ -1,6 +1,7 @@
 from langgraph.graph import END, StateGraph
 from app.agent.state import AgentState
-from app.agent.nodes import AgentNodes
+# FIX: Import from the specific 'nodes' module, not the package
+from app.agent.nodes.nodes import AgentNodes
 
 class GraphBuilder:
     def __init__(self, nodes: AgentNodes):

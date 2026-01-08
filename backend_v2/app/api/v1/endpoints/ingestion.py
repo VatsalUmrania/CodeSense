@@ -4,7 +4,6 @@ from typing import Any
 import uuid
 
 from app.api import deps
-# Ensure app.api.deps imports get_session as get_db, or use get_session directly
 from app.api.deps import get_db 
 from app.models.user import User, RepoAccess
 from app.models.repository import Repository, IngestionRun
@@ -29,11 +28,24 @@ def ingest_repository(
     try:
         # 1. Parse & Validate URL
         provider, owner, name = GitCloner.parse_url(str(request.repo_url))
+        
+        # --- FIX: Normalize provider for DB Enum (e.g., "github.com" -> "github") ---
+        if "." in provider:
+            provider = provider.split(".")[0]
+        # -----------------------------------------------------------------------------
+
         commit_sha = GitCloner.get_remote_head(str(request.repo_url))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    # It is good practice to catch Git errors here if GitCloner doesn't wrap them in ValueError
+    except Exception as e: 
+        # Catching generic Exception for safety given the previous git.exc crashes
+        # You might want to import git.exc.GitCommandError for more precision
+        if "fatal:" in str(e) or "exit code" in str(e):
+             raise HTTPException(status_code=400, detail=f"Git Error: {str(e)}")
+        raise e
 
-    # 2. Sync User (Write Op) - Ensure user exists in local DB
+    # 2. Sync User
     user = get_or_create_user(db, auth["clerk_id"])
 
     # 3. Find or Create Repository
@@ -44,7 +56,6 @@ def ingest_repository(
     )).first()
 
     if not repo:
-        # Create new repo
         repo = Repository(
             provider=provider,
             owner=owner,
@@ -57,7 +68,6 @@ def ingest_repository(
         db.commit()
         db.refresh(repo)
         
-        # Grant Ownership to the user who ingested it
         access = RepoAccess(
             user_id=user.id,
             repo_id=repo.id,
@@ -66,7 +76,13 @@ def ingest_repository(
         db.add(access)
         db.commit()
     else:
-        # Check existing access permissions if repo already exists
+        # FIX: Always update the latest_commit_sha to the one we are about to ingest
+        repo.latest_commit_sha = commit_sha
+        db.add(repo)
+        db.commit()
+        db.refresh(repo)
+
+        # Check existing access permissions
         access = db.exec(select(RepoAccess).where(
             RepoAccess.repo_id == repo.id,
             RepoAccess.user_id == user.id
@@ -74,7 +90,7 @@ def ingest_repository(
         if not access:
              raise HTTPException(status_code=403, detail="Permission denied. You do not have access to re-index this repository.")
     
-    # 4. Start Ingestion Pipeline (Celery Task)
+    # 4. Start Ingestion Pipeline
     run_id = coordinator.start_ingestion(repo.id, commit_sha)
 
     return IngestResponse(
@@ -90,12 +106,6 @@ def get_ingestion_status(
     auth: deps.AuthContext = Depends(deps.get_current_user),
     db: Session = Depends(get_db),
 ) -> Any:
-    """
-    Get the status of a specific ingestion run.
-    Validates that the authenticated user has access to the repository.
-    """
-    # Secure Status Polling via Join
-    # Only return run if the user has a RepoAccess entry for the related repository
     statement = (
         select(IngestionRun)
         .join(Repository, IngestionRun.repo_id == Repository.id)
