@@ -1,32 +1,85 @@
-import tempfile
-import uuid
+import git
 import os
-from git import Repo
+import shutil
+import tempfile
+import logging
+from urllib.parse import urlparse
 
-class ClonerService:
-    def clone_repo(self, repo_url: str):
+logger = logging.getLogger(__name__)
+
+class GitCloner:
+    @staticmethod
+    def parse_url(url: str) -> tuple[str, str, str]:
         """
-        Clones a repo to a temporary directory with optimized settings for speed.
-        Returns (temp_dir_object, full_local_path, repo_id).
+        Parses a git URL to extract provider, owner, and repo name.
         """
-        repo_id = str(uuid.uuid4())
+        parsed = urlparse(url)
+        path_parts = parsed.path.strip("/").split("/")
         
-        # Create a temporary directory that cleans itself up when the object is destroyed
-        temp_dir = tempfile.TemporaryDirectory(prefix="codesense_")
-        local_path = os.path.join(temp_dir.name, repo_id)
+        if len(path_parts) < 2:
+            raise ValueError("Invalid Repository URL")
+            
+        provider = parsed.netloc
+        owner = path_parts[0]
+        name = path_parts[1].replace(".git", "")
         
-        print(f"Cloning {repo_url} to {local_path}...")
+        return provider, owner, name
+
+    @staticmethod
+    def get_remote_head(url: str) -> str:
+        """
+        Gets the latest commit SHA from the remote HEAD without cloning.
+        """
+        g = git.cmd.Git()
+        try:
+            # FIX: Use the correct git command syntax
+            output = g.ls_remote(url, "HEAD")
+            if not output:
+                raise ValueError("No output from ls-remote")
+            return output.split()[0]
+        # FIX: Correct Exception Class
+        except git.exc.GitCommandError as e:
+            logger.error(f"Git Command Error: {e}")
+            raise ValueError(f"Could not access repository: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected Error checking remote head: {e}")
+            raise ValueError(f"Failed to resolve repository HEAD: {e}")
+
+    @staticmethod
+    def clone_repo(provider: str, owner: str, name: str, commit_sha: str) -> str:
+        """
+        Clones the repository to a temporary directory and checks out the specific commit.
+        Returns the local path.
+        """
+        # FIX: Handle Enum objects if passed directly from DB model
+        if hasattr(provider, "value"):
+            provider = provider.value
+
+        # FIX: Normalize provider to a real domain (DB stores 'github', Git needs 'github.com')
+        provider_str = str(provider).lower()
+        if provider_str == "github":
+            domain = "github.com"
+        elif provider_str == "gitlab":
+            domain = "gitlab.com"
+        elif provider_str == "bitbucket":
+            domain = "bitbucket.org"
+        else:
+            # Fallback for when the provider is already a domain (e.g. "github.com")
+            domain = provider
+
+        repo_url = f"https://{domain}/{owner}/{name}.git"
+        temp_dir = tempfile.mkdtemp()
         
-        # Optimization:
-        # depth=1: Shallow clone (no history)
-        # single_branch=True: Only fetch the default branch
-        # no_tags=True: Don't fetch tags
-        Repo.clone_from(
-            repo_url, 
-            local_path, 
-            depth=1, 
-            single_branch=True, 
-            no_tags=True
-        )
-        
-        return temp_dir, local_path, repo_id
+        try:
+            logger.info(f"Cloning {repo_url} to {temp_dir}...")
+            repo = git.Repo.clone_from(repo_url, temp_dir)
+            
+            logger.info(f"Checking out commit {commit_sha}...")
+            repo.git.checkout(commit_sha)
+            
+            return temp_dir
+        except Exception as e:
+            logger.error(f"Failed to clone repo: {e}")
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+            raise e
