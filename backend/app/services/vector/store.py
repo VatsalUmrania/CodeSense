@@ -22,7 +22,7 @@ class VectorStore:
                 self.client.create_collection(
                     collection_name=self.collection_name,
                     vectors_config=models.VectorParams(
-                        size=768,  # Matches Gemini text-embedding-004 size
+                        size=384,  # Matches BAAI/bge-small-en-v1.5 embedding size
                         distance=models.Distance.COSINE
                     )
                 )

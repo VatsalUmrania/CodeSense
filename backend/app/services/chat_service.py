@@ -70,10 +70,15 @@ from app.models.enums import MessageRole
 from app.schemas.chat import MessageResponse, ChunkCitation
 from app.services.llm.gemini import GeminiService
 from app.services.vector.search import VectorSearchService
+from app.services.query.hybrid_service import HybridQueryService
 from app.agent.nodes.nodes import AgentNodes
 from app.agent.graph import GraphBuilder
-from typing import List
+from typing import List, Dict, Any
 import uuid
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class ChatService:
     def __init__(self, db: Session):
@@ -82,13 +87,21 @@ class ChatService:
         self.llm_service = GeminiService()
         self.vector_service = VectorSearchService(self.llm_service)
         
-        # Initialize Agent Graph
+        # Initialize Hybrid Query Service (Phase 3)
+        self.hybrid_service = HybridQueryService(db)
+        
+        # Initialize Agent Graph (fallback for complex queries)
         self.nodes = AgentNodes(self.vector_service, self.llm_service)
         self.graph = GraphBuilder(self.nodes).build()
+        
+        # Flag to enable/disable hybrid mode
+        self.use_hybrid = True  # Set to False to use old agent-based approach
 
     async def process_message(self, session_id: uuid.UUID, content: str) -> MessageResponse:
         """
-        Orchestrates the Agent and handles strict persistence.
+        Orchestrates query processing with hybrid approach (Phase 3).
+        
+        Now uses static analysis + semantic search + LLM generation.
         """
         # 1. Fetch Session Metadata (to get repo_id and commit_sha)
         session_record = self.db.get(ChatSession, session_id)
@@ -104,7 +117,98 @@ class ChatService:
         self.db.add(user_msg)
         self.db.commit() 
         
-        # 3. Invoke Agent (LangGraph)
+        # 3. Process with Hybrid Service or Traditional Agent
+        generated_content = ""
+        citations: List[ChunkCitation] = []
+        static_results = None
+        
+        if self.use_hybrid:
+            logger.info("Using hybrid query service (Phase 3)")
+            try:
+                # Use new hybrid service
+                hybrid_result = await self.hybrid_service.execute_query(
+                    query=content,
+                    repo_id=session_record.repo_id,
+                    commit_sha=session_record.commit_sha,
+                    top_k=5
+                )
+                
+                generated_content = hybrid_result.llm_answer
+                static_results = hybrid_result.static_results
+                
+                # Convert retrieved chunks to citations
+                for chunk in hybrid_result.retrieved_chunks:
+                    citations.append(ChunkCitation(
+                        file_path=chunk.get('file_path', ''),
+                        start_line=chunk.get('start_line', 0),
+                        end_line=chunk.get('end_line', 0),
+                        content=chunk.get('content', ''),
+                        score=chunk.get('score', 0.0)
+                    ))
+                
+                logger.info(f"Hybrid query: {hybrid_result.query_type}, " +
+                           f"static={hybrid_result.static_results is not None}, " +
+                           f"semantic_chunks={len(citations)}")
+            
+            except Exception as e:
+                logger.error(f"Hybrid service failed: {e}, falling back to agent")
+                # Fall back to traditional agent
+                generated_content, citations = await self._process_with_agent(
+                    content, session_record
+                )
+        else:
+            # Use traditional agent-based approach
+            logger.info("Using traditional agent (hybrid disabled)")
+            generated_content, citations = await self._process_with_agent(
+                content, session_record
+            )
+
+        # 4. Persist Assistant Message
+        assistant_msg = ChatMessage(
+            session_id=session_id,
+            role=MessageRole.ASSISTANT,
+            content=generated_content
+        )
+        self.db.add(assistant_msg)
+        self.db.commit()
+        self.db.refresh(assistant_msg)
+        
+        # 5. Persist Citations (Traceability)
+        for cite in citations:
+            chunk_link = MessageChunk(
+                message_id=assistant_msg.id,
+                chunk_id=str(uuid.uuid4()),  # Placeholder
+                score=cite.score
+            )
+            self.db.add(chunk_link)
+        
+        self.db.commit()
+
+        # 6. Return Response (with optional static analysis metadata)
+        response = MessageResponse(
+            id=assistant_msg.id,
+            role=assistant_msg.role,
+            content=assistant_msg.content,
+            created_at=assistant_msg.created_at,
+            citations=citations
+        )
+        
+        # Add static analysis metadata if available
+        if static_results and static_results.success:
+            # Store in message metadata or include in response
+            logger.info(f"Static analysis: {static_results.query_type}, " +
+                       f"{len(static_results.results)} results")
+        
+        return response
+    
+    async def _process_with_agent(
+        self,
+        content: str,
+        session_record: ChatSession
+    ) -> tuple[str, List[ChunkCitation]]:
+        """
+        Process with traditional LangGraph agent (fallback).
+        """
         initial_state = {
             "question": content,
             "repo_id": str(session_record.repo_id),
@@ -120,37 +224,5 @@ class ChatService:
         
         generated_content = final_state.get("generation", "I'm sorry, I couldn't generate a response.")
         citations: List[ChunkCitation] = final_state.get("documents", [])
-
-        # 4. Persist Assistant Message
-        assistant_msg = ChatMessage(
-            session_id=session_id,
-            role=MessageRole.ASSISTANT,
-            content=generated_content
-        )
-        self.db.add(assistant_msg)
-        self.db.commit()
-        self.db.refresh(assistant_msg)
         
-        # 5. Persist Citations (Traceability)
-        for cite in citations:
-            # We map the citation back to the chunk_id stored in metadata
-            # Note: chunk_id logic depends on how you store it in 'metadata' inside 'retrieve' node
-            # For now, we assume VectorSearchService returns it in metadata['chunk_id']
-            # If standard UUID is strictly required by DB, ensure Vector Store uses UUIDs
-            chunk_link = MessageChunk(
-                message_id=assistant_msg.id,
-                chunk_id=str(uuid.uuid4()), # Placeholder if original ID isn't available/compatible
-                score=cite.score
-            )
-            self.db.add(chunk_link)
-        
-        self.db.commit()
-
-        # 6. Return Response
-        return MessageResponse(
-            id=assistant_msg.id,
-            role=assistant_msg.role,
-            content=assistant_msg.content,
-            created_at=assistant_msg.created_at,
-            citations=citations
-        )
+        return generated_content, citations

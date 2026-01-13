@@ -6,7 +6,6 @@ import shutil
 import os
 import json
 import msgpack
-import httpx
 import time
 from sqlmodel import select
 from app.core.celery_app import celery_app
@@ -21,38 +20,12 @@ from app.services.ingestion.cloner import GitCloner
 from app.services.ingestion.analyzer import GraphAnalyzer
 from app.services.ingestion.chunking import ChunkingService
 from app.services.vector.store import VectorStore
+from app.services.parsing.tree_sitter_parser import TreeSitterParser
+from app.services.indexing.symbol_indexer import SymbolIndexer
+from app.services.embeddings.local_service import get_embedding_service
 
-# --- Configuration for FREE TIER ---
-DB_BATCH_SIZE = 50 
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") 
-
-# FREE TIER LIMITS: 15 RPM (Requests Per Minute)
-# We set concurrency low to avoid flooding, but the real control is in the RateLimiter class below.
-MAX_ASYNC_CONCURRENCY = 2 
-
-class RateLimiter:
-    """
-    A Token Bucket rate limiter to respect Gemini Free Tier (15 RPM).
-    """
-    def __init__(self, requests_per_minute=10):
-        self.delay_between_requests = 60.0 / requests_per_minute
-        self.last_request_time = 0
-        self._lock = asyncio.Lock()
-
-    async def wait_for_slot(self):
-        async with self._lock:
-            current_time = time.time()
-            elapsed = current_time - self.last_request_time
-            
-            if elapsed < self.delay_between_requests:
-                wait_time = self.delay_between_requests - elapsed
-                print(f"Rate Limit: Sleeping {wait_time:.2f}s...")
-                await asyncio.sleep(wait_time)
-            
-            self.last_request_time = time.time()
-
-# Global Limiter Instance
-global_limiter = RateLimiter(requests_per_minute=10) # Safe buffer below 15 RPM
+# --- Configuration ---
+DB_BATCH_SIZE = 100  # No API limits with local embeddings!
 
 @celery_app.task(acks_late=True)
 def trigger_ingestion_pipeline(run_id: str):
@@ -88,21 +61,82 @@ def trigger_ingestion_pipeline(run_id: str):
         graph_data = analyzer.analyze_structure()
         ast_data = analyzer.generate_ast()
 
-        # 4. Chunking
+        # 3.5. Symbol Indexing (NEW)
+        print(f"Indexing code symbols...")
+        symbol_indexer = SymbolIndexer()
+        total_symbols = 0
+        
+        # Walk through all code files and index symbols
+        from app.services.parsing.language_detector import get_supported_extensions
+        for root, _, files in os.walk(local_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                rel_path = os.path.relpath(file_path, local_path)
+                
+                # Skip hidden files and directories
+                if any(part.startswith('.') for part in rel_path.split(os.sep)):
+                    continue
+                
+                try:
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read()
+                    
+                    # Index symbols from this file
+                    symbols = asyncio.run(
+                        symbol_indexer.index_file(
+                            file_path=rel_path,
+                            content=content,
+                            repo_id=repo.id,
+                            commit_sha=run.commit_sha,
+                            db=db
+                        )
+                    )
+                    total_symbols += len(symbols)
+                    
+                except Exception as e:
+                    # Skip files that can't be read or parsed
+                    pass
+        
+        # Commit all symbols
+        db.commit()
+        print(f"Indexed {total_symbols} symbols from repository")
+
+        # 3.6. Build Call Graph (Phase 2)
+        print(f"Building call graph...")
+        from app.services.analysis.call_graph_builder import CallGraphBuilder
+        from app.services.analysis.dependency_analyzer import DependencyAnalyzer
+        
+        call_graph_builder = CallGraphBuilder()
+        dependency_analyzer = DependencyAnalyzer()
+        
+        # Build function call relationships
+        call_stats = asyncio.run(
+            call_graph_builder.build_call_graph(repo.id, run.commit_sha, db)
+        )
+        print(f"Call graph: {call_stats.get('call_relationships', 0)} call relationships")
+        
+        # Analyze module dependencies
+        dep_stats = asyncio.run(
+            dependency_analyzer.analyze_dependencies(repo.id, run.commit_sha, db)
+        )
+        print(f"Dependencies: {dep_stats.internal_dependencies} internal, {dep_stats.external_dependencies} external")
+        
+        if dep_stats.circular_dependencies:
+            print(f"⚠️  Found {len(dep_stats.circular_dependencies)} circular dependencies")
+        
+        # Commit all relationships
+        db.commit()
+
+        # 4. Chunking & Embedding (Local BGE - FAST!)
         print("Starting Chunking...")
         chunker = ChunkingService()
         chunks = chunker.chunk_repository(local_path)
         total_chunks = len(chunks)
-        print(f"Generated {total_chunks} chunks. Switching to Async Engine (Free Tier Mode)...")
+        print(f"Generated {total_chunks} chunks. Using local BGE embeddings...")
 
-        # --- THE BRIDGE: Sync -> Async ---
-        if not GOOGLE_API_KEY:
-            raise ValueError("GOOGLE_API_KEY is not set.")
-
-        asyncio.run(
-            process_embeddings_async(repo, run, chunks)
-        )
-        # --------------------------------
+        # Import and use local embeddings (no async needed!)
+        from app.workers.embedding_helpers import process_embeddings_local
+        process_embeddings_local(repo, run, chunks)
 
         # 5. Save Artifacts
         print(f"Uploading artifacts...")
@@ -134,119 +168,6 @@ def trigger_ingestion_pipeline(run_id: str):
         db.close()
 
 
-# --- The Async Engine ---
-
-async def process_embeddings_async(repo, run, chunks):
-    """
-    Async Engine with Strict Free Tier Limits.
-    """
-    vector_store = VectorStore()
-    
-    # Low Concurrency for Free Tier
-    sem = asyncio.Semaphore(MAX_ASYNC_CONCURRENCY)
-    
-    # Longer timeout for potential 429 backoffs
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        
-        count = 0
-
-        # Process in batches
-        for i in range(0, len(chunks), DB_BATCH_SIZE):
-            chunk_window = chunks[i : i + DB_BATCH_SIZE]
-            
-            tasks = [
-                embed_single_chunk(client, sem, chunk, repo.id, run.commit_sha)
-                for chunk in chunk_window
-            ]
-            
-            # Gather results
-            results = await asyncio.gather(*tasks)
-            
-            # Filter valid
-            valid_vectors = [r for r in results if r is not None]
-            
-            if valid_vectors:
-                await asyncio.to_thread(vector_store.upsert_chunks, valid_vectors)
-                count += len(valid_vectors)
-                print(f"Indexed {count}/{len(chunks)} chunks...")
-
-async def embed_single_chunk(client: httpx.AsyncClient, sem: asyncio.Semaphore, chunk: dict, repo_id, commit_sha):
-    """
-    Embeds a single chunk with Global Rate Limiting + Retry Logic.
-    """
-    async with sem:
-        # 1. Enforce Global RPM Limit (Wait before sending)
-        await global_limiter.wait_for_slot()
-        
-        try:
-            # 2. Call API (handling retries internally)
-            embedding = await call_gemini_api_with_retry(client, chunk["content"])
-            
-            if not embedding:
-                return None
-
-            # Deterministic ID
-            unique_str = f"{repo_id}:{commit_sha}:{chunk['file_path']}:{chunk['start_line']}"
-            vector_id = hashlib.sha256(unique_str.encode()).hexdigest()
-
-            return {
-                "id": vector_id,
-                "vector": embedding,
-                "payload": {
-                    "repo_id": str(repo_id),
-                    "commit_sha": commit_sha,
-                    "file_path": chunk["file_path"],
-                    "content": chunk["content"],
-                    "start_line": chunk["start_line"],
-                    "end_line": chunk["end_line"]
-                }
-            }
-        except Exception as e:
-            print(f"Failed to embed {chunk.get('file_path', 'unknown')}: {e}")
-            return None
-
-async def call_gemini_api_with_retry(client: httpx.AsyncClient, text: str, max_retries=3):
-    """
-    Manual Async implementation of Gemini Embedding with Smart 429 Handling.
-    """
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={GOOGLE_API_KEY}"
-    payload = {
-        "model": "models/text-embedding-004",
-        "content": {"parts": [{"text": text}]}
-    }
-    
-    for attempt in range(max_retries):
-        try:
-            response = await client.post(url, json=payload)
-            
-            # Handle Rate Limits (429)
-            if response.status_code == 429:
-                # Try to parse "Retry-After" header, or default to exponential backoff
-                retry_after = response.headers.get("retry-after")
-                if retry_after:
-                    wait = float(retry_after)
-                else:
-                    # Exponential backoff: 20s, 40s, 80s (Gemini free tier penalties are long)
-                    wait = 20.0 * (2 ** attempt) 
-                
-                print(f"Gemini 429 Hit. Waiting {wait}s before retry {attempt+1}/{max_retries}...")
-                await asyncio.sleep(wait)
-                continue
-                
-            response.raise_for_status()
-            data = response.json()
-            return data["embedding"]["values"]
-            
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code != 429:
-                 # If it's not a rate limit (e.g., 500 or 400), don't retry blindly
-                print(f"Gemini Error {e.response.status_code}: {e.response.text}")
-                return None
-        except Exception as e:
-            print(f"Network Error: {e}")
-            return None
-            
-    return None
 
 def save_artifacts(repo: Repository, commit_sha: str, graph_data: dict, ast_data: list):
     paths = StoragePaths()

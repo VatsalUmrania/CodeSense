@@ -3,3 +3,4 @@ from app.models.enums import *
 from app.models.user import User, RepoAccess
 from app.models.chat import ChatSession, ChatMessage, MessageChunk
 from app.models.repository import Repository, IngestionRun
+from app.models.code_graph import CodeSymbol, SymbolRelationship
