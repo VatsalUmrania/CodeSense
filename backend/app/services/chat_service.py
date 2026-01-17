@@ -81,14 +81,23 @@ logger = logging.getLogger(__name__)
 
 
 class ChatService:
-    def __init__(self, db: Session):
+    def __init__(
+        self, 
+        db: Session,
+        llm_service: GeminiService,
+        vector_service: VectorSearchService
+    ):
         self.db = db
-        # Initialize Services
-        self.llm_service = GeminiService()
-        self.vector_service = VectorSearchService()
+        # Use injected singleton services instead of creating new ones
+        self.llm_service = llm_service
+        self.vector_service = vector_service
         
-        # Initialize Hybrid Query Service (Phase 3)
-        self.hybrid_service = HybridQueryService(db)
+        # Initialize Hybrid Query Service (Phase 3) with injected services
+        self.hybrid_service = HybridQueryService(
+            db=db,
+            llm_service=llm_service,
+            vector_service=vector_service
+        )
         
         # Initialize Agent Graph (fallback for complex queries)
         self.nodes = AgentNodes(self.vector_service, self.llm_service)

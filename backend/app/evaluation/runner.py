@@ -47,9 +47,10 @@ class EvaluationRunner:
         self.repo_id = repo_id
         self.commit_sha = commit_sha
         
-        # Initialize services
-        self.hybrid_service = HybridQueryService(db)
-        self.chat_service = ChatService(db)
+        # Initialize services with dependency injection
+        from app.api.dependencies import get_chat_service_dep, get_hybrid_service_dep
+        self.hybrid_service = get_hybrid_service_dep(db)
+        self.chat_service = get_chat_service_dep(db)
     
     async def run_query_with_hybrid(
         self,

@@ -52,13 +52,19 @@ class HybridQueryService:
     5. Return fused result
     """
     
-    def __init__(self, db: Session):
-        """Initialize hybrid service with dependencies."""
+    def __init__(
+        self, 
+        db: Session,
+        llm_service: GeminiService,
+        vector_service: VectorSearchService
+    ):
+        """Initialize hybrid service with injected dependencies."""
         self.db = db
         self.query_router = QueryRouter()
         self.static_engine = StaticQueryEngine(db)
-        self.llm_service = GeminiService()
-        self.vector_service = VectorSearchService()
+        # Use injected singleton services instead of creating new ones
+        self.llm_service = llm_service
+        self.vector_service = vector_service
     
     async def execute_query(
         self,

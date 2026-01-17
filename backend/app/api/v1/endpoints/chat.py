@@ -83,7 +83,10 @@ async def send_message(
     if not session:
         raise HTTPException(status_code=403, detail="Session not found or unauthorized")
 
-    chat_service = ChatService(db)
+    # Use dependency injection to get ChatService with singleton services
+    from app.api.dependencies import get_chat_service_dep
+    chat_service = get_chat_service_dep(db)
+    
     response = await chat_service.process_message(
         session_id=session.id,
         content=request.content

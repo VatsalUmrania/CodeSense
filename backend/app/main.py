@@ -35,6 +35,27 @@ async def lifespan(app: FastAPI):
         logger.info("--- STARTUP: Vector Store Ready ---")
     except Exception as e:
         logger.error(f"--- STARTUP ERROR: Could not initialize Vector Store: {e}")
+    
+    # FIX 3: Pre-load Singleton Services (Prevents per-request initialization)
+    logger.info("--- STARTUP: Pre-loading Services ---")
+    try:
+        # Import singleton getters
+        from app.services.embeddings.local_service import get_embedding_service
+        from app.services.llm.gemini import get_llm_service
+        
+        # Pre-load embedding model (~45 seconds, but only once at startup!)
+        logger.info("Loading embedding model...")
+        get_embedding_service()
+        logger.info("✓ Embedding model loaded")
+        
+        # Pre-load LLM service
+        logger.info("Loading LLM service...")
+        get_llm_service()
+        logger.info("✓ LLM service loaded")
+        
+        logger.info("--- STARTUP: All Services Ready ---")
+    except Exception as e:
+        logger.error(f"--- STARTUP ERROR: Could not initialize services: {e}")
 
     yield
 

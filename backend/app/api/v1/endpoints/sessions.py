@@ -84,9 +84,9 @@ async def send_message(
     if session.user_id != user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    # 3. Process with ChatService
-    # This handles saving the User message AND generating/saving the AI response
-    chat_service = ChatService(db)
+    # 3. Process with ChatService using dependency injection
+    from app.api.dependencies import get_chat_service_dep
+    chat_service = get_chat_service_dep(db)
     response = await chat_service.process_message(
         session_id=session.id,
         content=request.content

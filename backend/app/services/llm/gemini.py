@@ -223,3 +223,21 @@ class GeminiService:
         except Exception as e:
             logger.error(f"LLM Text Generation Error ({self.provider}): {e}")
             raise e
+
+
+# Singleton instance
+_llm_service = None
+
+
+def get_llm_service() -> GeminiService:
+    """
+    Get the singleton LLM service instance.
+    
+    The service is initialized once and reused across all requests.
+    """
+    global _llm_service
+    
+    if _llm_service is None:
+        _llm_service = GeminiService()
+    
+    return _llm_service

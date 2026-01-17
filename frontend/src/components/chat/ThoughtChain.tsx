@@ -62,7 +62,7 @@ export function ThoughtChain({ isVisible, steps = [] }: ThoughtChainProps) {
               {activeSteps.map((step, idx) => {
                 const isCompleted = idx < currentStepIndex;
                 const isCurrent = idx === currentStepIndex;
-                
+
                 return (
                   <motion.div
                     key={idx}
