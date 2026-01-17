@@ -21,7 +21,7 @@
 //   const [isSidebarExpanded, setIsSidebarExpanded] = useState(true);
 //   const [activeFile, setActiveFile] = useState<Source | null>(null);
 //   const [user, setUser] = useState<{ email: string } | null>(null);
-  
+
 //   const { 
 //     messages, 
 //     isChatting, 
@@ -110,7 +110,7 @@
 
 //   return (
 //     <div className="flex h-screen w-full bg-background text-foreground font-sans overflow-hidden selection:bg-primary/20">
-      
+
 //       <AppSidebar 
 //         isCollapsed={!isSidebarExpanded}
 //         toggleSidebar={() => setIsSidebarExpanded(!isSidebarExpanded)}
@@ -123,7 +123,7 @@
 //       />
 
 //       <main className="flex-1 flex flex-col h-full min-w-0 relative bg-background/50">
-        
+
 //         {/* --- Header --- */}
 //         <header className="h-14 border-b border-border flex items-center justify-between px-4 bg-background/80 backdrop-blur-md shrink-0 z-20 sticky top-0">
 //             <div className="flex items-center gap-3 pl-2">
@@ -145,11 +145,11 @@
 //         <div className="flex-1 overflow-hidden relative w-full">
 //             <ScrollArea className="h-full w-full">
 //                 <div className="flex flex-col min-h-full p-4 md:p-8 max-w-5xl mx-auto">
-                    
+
 //                     {/* --- EMPTY STATE --- */}
 //                     {messages.length === 0 && (
 //                         <div className="flex-1 flex flex-col items-center justify-center h-full min-h-[60vh] animate-in fade-in slide-in-from-bottom-4 duration-700">
-                            
+
 //                             <div className="relative mb-8 group cursor-default">
 //                                 <div className="absolute -inset-1 bg-linear-to-r from-primary/30 to-purple-500/30 rounded-full blur opacity-20 group-hover:opacity-40 transition duration-1000"></div>
 //                                 <img src="/logo.svg" alt="CodeSense" className="w-10 h-10 opacity-90" />
@@ -181,7 +181,7 @@
 //                             </div>
 //                         </div>
 //                     )}
-                    
+
 //                     {/* Messages */}
 //                     <div className="space-y-8 pb-4">
 //                         {messages.map((msg, i) => (
@@ -195,7 +195,7 @@
 //                              />
 //                         ))}
 //                     </div>
-                    
+
 //                     {/* Typing Indicator */}
 //                     {isChatting && (
 //                         <div className="flex items-center gap-3 mt-2 ml-1">     
@@ -203,7 +203,7 @@
 //                             <span className="text-xs text-muted-foreground animate-pulse">Thinking...</span>
 //                         </div>
 //                     )}
-                    
+
 //                     {/* Scroll Anchor */}
 //                     <div ref={scrollRef} className="w-full h-px mt-4 pb-32" />
 //                 </div>
@@ -264,186 +264,186 @@ import type { components } from "@/lib/api/types";
 type ChunkCitation = components["schemas"]["ChunkCitation"];
 
 function ChatInterface() {
-  const searchParams = useSearchParams();
-  const router = useRouter();
-  const repoUrl = searchParams.get("url");
+    const searchParams = useSearchParams();
+    const router = useRouter();
+    const repoUrl = searchParams.get("url");
 
-  // --- Layout State ---
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [inspectorOpen, setInspectorOpen] = useState(false);
-  
-  // --- Data State ---
-  const [user, setUser] = useState<{ email: string } | null>(null);
-  const [activeFile, setActiveFile] = useState<{
-      path: string;
-      content: string;
-      language: string;
-      startLine?: number;
-      endLine?: number;
-  } | null>(null);
+    // --- Layout State ---
+    const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+    const [inspectorOpen, setInspectorOpen] = useState(false);
 
-  const { 
-    messages, 
-    isChatting, 
-    ingestStatus, 
-    ingestRepo, 
-    sendMessage,
-    fetchFileContent,
-    clearSession,
-    repoId,
-    sessions,
-    sessionId,
-    selectSession,
-    handleDeleteSession
-  } = useCodeSense();
+    // --- Data State ---
+    const [user, setUser] = useState<{ email: string } | null>(null);
+    const [activeFile, setActiveFile] = useState<{
+        path: string;
+        content: string;
+        language: string;
+        startLine?: number;
+        endLine?: number;
+    } | null>(null);
 
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const hasInitialized = useRef(false);
+    const {
+        messages,
+        isChatting,
+        ingestStatus,
+        ingestRepo,
+        sendMessage,
+        fetchFileContent,
+        clearSession,
+        repoId,
+        sessions,
+        sessionId,
+        selectSession,
+        handleDeleteSession
+    } = useCodeSense();
 
-  // 1. Initialization
-  useEffect(() => {
-    if (repoUrl && !hasInitialized.current) {
-        hasInitialized.current = true;
-        ingestRepo(repoUrl);
-        getCurrentUser().then((u: any) => { if (u) setUser(u); });
-    } else if (!repoUrl) {
-       // Optional: Redirect or just allow picking a repo
-    }
-  }, [repoUrl, ingestRepo]);
+    const scrollRef = useRef<HTMLDivElement>(null);
+    const hasInitialized = useRef(false);
 
-  // 2. Auto-Scroll
-  useEffect(() => {
-    if (scrollRef.current) {
-        scrollRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
-    }
-  }, [messages, isChatting]);
-
-  // 3. Handle Citation Click
-  const handleCitationClick = async (citation: ChunkCitation) => {
-    setInspectorOpen(true);
-    // Optimistic / Loading State
-    setActiveFile({
-        path: citation.file_path,
-        content: citation.content_preview || "// Loading full content...",
-        language: citation.file_path.split('.').pop() || 'text',
-        startLine: citation.start_line,
-        endLine: citation.start_line + 10 // approximate
-    });
-
-    if (repoId) {
-        const content = await fetchFileContent(repoId, citation.file_path);
-        if (content) {
-            setActiveFile({
-                path: citation.file_path,
-                content: content,
-                language: citation.file_path.split('.').pop() || 'text',
-                startLine: citation.start_line,
-                endLine: citation.start_line + 20 // Highlight range
-            });
+    // 1. Initialization
+    useEffect(() => {
+        if (repoUrl && !hasInitialized.current) {
+            hasInitialized.current = true;
+            ingestRepo(repoUrl);
+            getCurrentUser().then((u: any) => { if (u) setUser(u); });
+        } else if (!repoUrl) {
+            // Optional: Redirect or just allow picking a repo
         }
-    }
-  };
+    }, [repoUrl, ingestRepo]);
 
-  const handleRepoIngest = (url: string) => {
-    router.push(`/chat?url=${encodeURIComponent(url)}`);
-    if(repoUrl !== url) {
-        hasInitialized.current = false; // Reset init check for new repo
-    }
-  };
+    // 2. Auto-Scroll
+    useEffect(() => {
+        if (scrollRef.current) {
+            scrollRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
+        }
+    }, [messages, isChatting]);
 
-  return (
-    <div className="flex h-screen w-full bg-background overflow-hidden font-sans">
-      
-      {/* 1. Left Sidebar */}
-      <AppSidebar 
-        isCollapsed={isSidebarCollapsed}
-        toggleSidebar={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-        repoUrl={repoUrl || ""}
-        sessions={sessions}
-        currentSessionId={sessionId}
-        onSessionSelect={selectSession}
-        onSessionDelete={handleDeleteSession}
-        onClear={() => clearSession()}
-      />
+    // 3. Handle Citation Click
+    const handleCitationClick = async (citation: ChunkCitation) => {
+        setInspectorOpen(true);
+        // Optimistic / Loading State
+        setActiveFile({
+            path: citation.file_path,
+            content: citation.content_preview || "// Loading full content...",
+            language: citation.file_path.split('.').pop() || 'text',
+            startLine: citation.start_line,
+            endLine: citation.start_line + 10 // approximate
+        });
 
-      {/* 2. Main Chat Canvas */}
-      <main className="flex-1 flex flex-col h-full min-w-0 relative z-10">
-        
-        {/* Header */}
-        <header className="h-14 border-b border-border flex items-center justify-between px-6 bg-background/80 backdrop-blur-md sticky top-0 z-20">
-            <RepoPicker 
-                currentRepoUrl={repoUrl} 
-                onIngest={handleRepoIngest} 
-                isIngesting={ingestStatus === 'loading'} 
+        if (repoId) {
+            const content = await fetchFileContent(repoId, citation.file_path);
+            if (content) {
+                setActiveFile({
+                    path: citation.file_path,
+                    content: content,
+                    language: citation.file_path.split('.').pop() || 'text',
+                    startLine: citation.start_line,
+                    endLine: citation.start_line + 20 // Highlight range
+                });
+            }
+        }
+    };
+
+    const handleRepoIngest = (url: string) => {
+        router.push(`/chat?url=${encodeURIComponent(url)}`);
+        if (repoUrl !== url) {
+            hasInitialized.current = false; // Reset init check for new repo
+        }
+    };
+
+    return (
+        <div className="flex h-screen w-full bg-background overflow-hidden font-sans">
+
+            {/* 1. Left Sidebar */}
+            <AppSidebar
+                isCollapsed={isSidebarCollapsed}
+                toggleSidebar={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+                repoUrl={repoUrl || ""}
+                sessions={sessions}
+                currentSessionId={sessionId}
+                onSessionSelect={selectSession}
+                onSessionDelete={handleDeleteSession}
+                onClear={() => clearSession()}
             />
-            {ingestStatus === 'loading' && (
-                <div className="flex items-center gap-2 text-[10px] text-muted-foreground animate-pulse">
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                    Indexing Codebase...
-                </div>
-            )}
-        </header>
 
-        {/* Chat Stream */}
-        <div className="flex-1 relative overflow-hidden flex flex-col">
-            <ScrollArea className="flex-1 w-full">
-                <div className="max-w-3xl mx-auto py-10 px-6">
-                    
-                    {/* Welcome State */}
-                    {messages.length === 0 && (
-                        <div className="flex flex-col items-center justify-center min-h-[40vh] text-center space-y-4 opacity-0 animate-in fade-in duration-700 slide-in-from-bottom-4 fill-mode-forwards">
-                            <div className="w-16 h-16 bg-linear-to-tr from-primary/20 to-blue-500/20 rounded-2xl flex items-center justify-center mb-4 ring-1 ring-border/50">
-                                <img src="/logo.svg" className="w-8 h-8 opacity-80" />
-                            </div>
-                            <h2 className="text-2xl font-semibold tracking-tight">CodeSense IDE</h2>
-                            <p className="text-muted-foreground max-w-md text-sm leading-relaxed">
-                                Context-aware chat for <strong>{repoUrl?.split('/').pop() || 'your codebase'}</strong>.
-                                <br/>I can explain architecture, find bugs, and write code.
-                            </p>
+            {/* 2. Main Chat Canvas */}
+            <main className="flex-1 flex flex-col h-full min-w-0 relative z-10">
+
+                {/* Header */}
+                <header className="h-14 border-b border-border flex items-center justify-between px-6 bg-background/80 backdrop-blur-md sticky top-0 z-20">
+                    <RepoPicker
+                        currentRepoUrl={repoUrl}
+                        onIngest={handleRepoIngest}
+                        isIngesting={ingestStatus === 'loading'}
+                    />
+                    {ingestStatus === 'loading' && (
+                        <div className="flex items-center gap-2 text-[10px] text-muted-foreground animate-pulse">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            Indexing Codebase...
                         </div>
                     )}
+                </header>
 
-                    {/* Message List */}
-                    {messages.map((msg, i) => (
-                        <MessageBubble 
-                            key={i}
-                            role={msg.role}
-                            content={msg.content}
-                            citations={msg.citations} // backend v2 feature
-                            user={user}
-                            onCitationClick={handleCitationClick}
-                        />
-                    ))}
+                {/* Chat Stream */}
+                <div className="flex-1 relative overflow-hidden flex flex-col">
+                    <ScrollArea className="flex-1 w-full">
+                        <div className="max-w-3xl mx-auto py-10 px-6">
 
-                    {/* Thought Process (Shown when waiting for AI) */}
-                    <ThoughtChain isVisible={isChatting} />
-                    
-                    <div ref={scrollRef} className="h-4" />
+                            {/* Welcome State */}
+                            {messages.length === 0 && (
+                                <div className="flex flex-col items-center justify-center min-h-[40vh] text-center space-y-4 opacity-0 animate-in fade-in duration-700 slide-in-from-bottom-4 fill-mode-forwards">
+                                    <div className="w-16 h-16 bg-linear-to-tr from-primary/20 to-blue-500/20 rounded-2xl flex items-center justify-center mb-4 ring-1 ring-border/50">
+                                        <img src="/logo.svg" className="w-8 h-8 " />
+                                    </div>
+                                    <h2 className="text-2xl font-semibold tracking-tight">CodeSense IDE</h2>
+                                    <p className="text-muted-foreground max-w-md text-sm leading-relaxed">
+                                        Context-aware chat for <strong>{repoUrl?.split('/').pop() || 'your codebase'}</strong>.
+                                        <br />I can explain architecture, find bugs, and write code.
+                                    </p>
+                                </div>
+                            )}
+
+                            {/* Message List */}
+                            {messages.map((msg, i) => (
+                                <MessageBubble
+                                    key={i}
+                                    role={msg.role}
+                                    content={msg.content}
+                                    citations={msg.citations} // backend v2 feature
+                                    user={user}
+                                    onCitationClick={handleCitationClick}
+                                />
+                            ))}
+
+                            {/* Thought Process (Shown when waiting for AI) */}
+                            <ThoughtChain isVisible={isChatting} />
+
+                            <div ref={scrollRef} className="h-4" />
+                        </div>
+                    </ScrollArea>
+
+                    {/* Input Area */}
+                    <div className="p-6 pt-2 bg-linear-to-t from-background via-background to-transparent z-20">
+                        <div className="max-w-3xl mx-auto">
+                            <ChatInput
+                                onSend={sendMessage}
+                                disabled={ingestStatus !== 'success'}
+                            />
+                        </div>
+                    </div>
                 </div>
-            </ScrollArea>
 
-            {/* Input Area */}
-            <div className="p-6 pt-2 bg-linear-to-t from-background via-background to-transparent z-20">
-                <div className="max-w-3xl mx-auto">
-                    <ChatInput 
-                        onSend={sendMessage} 
-                        disabled={ingestStatus !== 'success'} 
-                    />
-                </div>
-            </div>
+            </main>
+
+            {/* 3. Right Inspector Panel */}
+            <InspectorPanel
+                isOpen={inspectorOpen}
+                onClose={() => setInspectorOpen(false)}
+                file={activeFile}
+            />
+
         </div>
-
-      </main>
-
-      {/* 3. Right Inspector Panel */}
-      <InspectorPanel 
-        isOpen={inspectorOpen} 
-        onClose={() => setInspectorOpen(false)} 
-        file={activeFile}
-      />
-
-    </div>
-  );
+    );
 }
 
 export default function ChatPage() {

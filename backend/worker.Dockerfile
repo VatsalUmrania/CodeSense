@@ -29,4 +29,4 @@ USER appuser
 # -----------------------------------------------
 
 # Command to run the worker
-CMD ["celery", "-A", "app.core.celery_app.celery_app", "worker", "--loglevel=info"]
+CMD ["celery", "-A", "app.core.celery_app.celery_app", "worker", "--loglevel=info", "--pool=solo"]

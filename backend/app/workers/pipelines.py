@@ -7,6 +7,7 @@ import os
 import json
 import msgpack
 import time
+import tarfile
 from sqlmodel import select
 from app.core.celery_app import celery_app
 from app.db.session import SessionLocal
@@ -53,6 +54,9 @@ def trigger_ingestion_pipeline(run_id: str):
 
         # 2. Clone
         print(f"Cloning repo...")
+        run.status = IngestionStatus.RUNNING
+        db.add(run)
+        db.commit()
         local_path = GitCloner.clone_repo(repo.provider, repo.owner, repo.name, run.commit_sha)
 
         # 3. Analyze
@@ -101,8 +105,36 @@ def trigger_ingestion_pipeline(run_id: str):
         db.commit()
         print(f"Indexed {total_symbols} symbols from repository")
 
+
+        # 3.5.5. Save source tree to MinIO for call graph analysis
+        print(f"Uploading source tree to MinIO...")
+        db.commit()  # Commit indexed symbols so frontend can see progress
+        source_tarball_path = f"/tmp/{repo.id}_{run.commit_sha}_source.tar.gz"
+        
+        with tarfile.open(source_tarball_path, "w:gz") as tar:
+            tar.add(local_path, arcname="")
+        
+        storage = StorageService()
+        paths = StoragePaths()
+        
+        from app.services.storage import ArtifactType
+        # Convert provider enum to string
+        provider_str = str(repo.provider).split('.')[-1].lower()
+        source_artifact_key = paths.get_artifact_path(
+            provider_str, repo.owner, repo.name, run.commit_sha,
+            ArtifactType.SOURCE_TREE
+        )
+        
+        with open(source_tarball_path, 'rb') as f:
+            storage.upload_object(source_artifact_key, f.read(), "application/gzip")
+        
+        os.remove(source_tarball_path)
+        print(f"Source tree uploaded to {source_artifact_key}")
+
+
         # 3.6. Build Call Graph (Phase 2)
         print(f"Building call graph...")
+        db.commit()  # Update after source upload
         from app.services.analysis.call_graph_builder import CallGraphBuilder
         from app.services.analysis.dependency_analyzer import DependencyAnalyzer
         
@@ -126,9 +158,11 @@ def trigger_ingestion_pipeline(run_id: str):
         
         # Commit all relationships
         db.commit()
+        db.refresh(run)  # Refresh to see latest state
 
         # 4. Chunking & Embedding (Local BGE - FAST!)
-        print("Starting Chunking...")
+        print(f"Starting Chunking...")
+        db.commit()  # Update after call graph complete
         chunker = ChunkingService()
         chunks = chunker.chunk_repository(local_path)
         total_chunks = len(chunks)

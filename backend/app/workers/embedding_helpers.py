@@ -28,7 +28,7 @@ def process_embeddings_local(repo, run, chunks):
     
     # Generate all embeddings in batches (FAST!)
     print("Generating embeddings...")
-    embeddings = embedder.embed_batch(texts, batch_size=64)
+    embeddings = embedder.embed_batch(texts, batch_size=16)
     
     # Prepare for Qdrant
     from app.services.vector.store import VectorStore
@@ -37,9 +37,11 @@ def process_embeddings_local(repo, run, chunks):
     print("Preparing vectors for storage...")
     vectors = []
     for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
-        # Deterministic ID
+        # Deterministic ID - convert SHA256 to UUID format for Qdrant
         unique_str = f"{repo.id}:{run.commit_sha}:{chunk['file_path']}:{chunk['start_line']}"
-        vector_id = hashlib.sha256(unique_str.encode()).hexdigest()
+        hash_hex = hashlib.sha256(unique_str.encode()).hexdigest()
+        # Take first 32 chars and format as UUID
+        vector_id = f"{hash_hex[:8]}-{hash_hex[8:12]}-{hash_hex[12:16]}-{hash_hex[16:20]}-{hash_hex[20:32]}"
         
         vectors.append({
             "id": vector_id,

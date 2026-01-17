@@ -72,7 +72,7 @@ class LocalEmbeddingService:
         
         return embeddings_list
     
-    def embed_batch(self, texts: List[str], batch_size: int = 64) -> List[List[float]]:
+    def embed_batch(self, texts: List[str], batch_size: int = 16) -> List[List[float]]:
         """
         Generate embeddings for a batch of texts.
         

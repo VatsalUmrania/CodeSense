@@ -29,7 +29,7 @@ class GeminiService:
             temperature=0
         )
         self.llm_pro = ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash",
             google_api_key=settings.GOOGLE_API_KEY,
             temperature=0.3
         )
@@ -146,27 +146,14 @@ class GeminiService:
         
         response = await self.llm_pro.ainvoke(prompt)
         return response.content
-        """
-        Generates the final answer using the context.
-        """
-        # Format context from the retrieved documents
-        context_str = "\n\n".join(
-            [f"File: {doc.metadata.get('file_path', 'unknown')}\nCode:\n{doc.page_content}" for doc in context]
-        )
 
-        prompt = f"""You are CodeSense, an expert AI software engineer.
-        Answer the user's question based strictly on the provided context.
-        
-        Guidelines:
-        - If the answer is not in the code, admit it.
-        - Cite specific file names and variable names.
-        - Use Markdown for code blocks.
-        
-        Question: {question}
-        
-        Context:
-        {context_str}
+    async def generate_text(self, prompt: str) -> str:
         """
-        
-        response = await self.llm_pro.ainvoke(prompt)
-        return response.content
+        Generates a text response for a given prompt using the pro model.
+        """
+        try:
+            response = await self.llm_pro.ainvoke(prompt)
+            return response.content
+        except Exception as e:
+            logger.error(f"Gemini Text Generation Error: {e}")
+            raise e

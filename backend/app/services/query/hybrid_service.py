@@ -58,7 +58,7 @@ class HybridQueryService:
         self.query_router = QueryRouter()
         self.static_engine = StaticQueryEngine(db)
         self.llm_service = GeminiService()
-        self.vector_service = VectorSearchService(self.llm_service)
+        self.vector_service = VectorSearchService()
     
     async def execute_query(
         self,
@@ -101,10 +101,10 @@ class HybridQueryService:
             try:
                 # Use vector search to find relevant code chunks
                 search_results = await self.vector_service.search(
-                    query_text=query,
+                    query=query,
                     repo_id=str(repo_id),
                     commit_sha=commit_sha,
-                    top_k=top_k
+                    limit=top_k
                 )
                 retrieved_chunks = search_results
                 logger.info(f"Retrieved {len(retrieved_chunks)} semantic chunks")
@@ -170,8 +170,9 @@ class HybridQueryService:
         if semantic_chunks:
             context_parts.append("\n## Relevant Code Snippets\n")
             for i, chunk in enumerate(semantic_chunks[:5], 1):
-                file_path = chunk.get('file_path', 'unknown')
-                content = chunk.get('content', '')
+                # SearchResult is an object, not a dict
+                file_path = chunk.metadata.get('file_path', 'unknown')
+                content = chunk.page_content
                 context_parts.append(f"\n### Snippet {i} ({file_path})\n```\n{content}\n```\n")
         
         context = "".join(context_parts)
@@ -258,10 +259,10 @@ Be clear about what comes from static analysis (facts) vs code inspection (imple
         if result.retrieved_chunks:
             response["code_references"] = [
                 {
-                    "file_path": chunk.get('file_path'),
-                    "start_line": chunk.get('start_line'),
-                    "end_line": chunk.get('end_line'),
-                    "score": chunk.get('score', 0),
+                    "file_path": chunk.metadata.get('file_path'),
+                    "start_line": chunk.metadata.get('start_line'),
+                    "end_line": chunk.metadata.get('end_line'),
+                    "score": chunk.score,
                 }
                 for chunk in result.retrieved_chunks
             ]

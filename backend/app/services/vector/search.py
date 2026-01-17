@@ -1,6 +1,6 @@
 from qdrant_client import AsyncQdrantClient, models
 from app.core.config import settings
-from app.services.llm.gemini import GeminiService
+from app.services.embeddings.local_service import get_embedding_service
 from dataclasses import dataclass
 from typing import List, Dict, Any
 import logging
@@ -14,14 +14,16 @@ class SearchResult:
     score: float
 
 class VectorSearchService:
-    def __init__(self, llm_service: GeminiService):
+    def __init__(self):
         self.client = AsyncQdrantClient(url=settings.QDRANT_URL)
         self.collection_name = "codesense_codebase"
-        self.llm = llm_service
+        self.embedding_service = get_embedding_service()
 
     async def search(self, repo_id: str, query: str, commit_sha: str, limit: int = 10) -> List[SearchResult]:
         # 1. Embed the query
-        query_vector = await self.llm.embed_query(query)
+        # Local embedding service returns a list of floats directly for a single string
+        query_vector = self.embedding_service.embed(query)
+        
         if not query_vector:
             logger.error("Failed to generate embedding for query.")
             return []

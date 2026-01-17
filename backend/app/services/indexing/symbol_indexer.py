@@ -118,7 +118,7 @@ class SymbolIndexer:
         if symbols:
             db.add_all(symbols)
             db.flush()  # Get IDs without committing
-            logger.info(f"Indexed {len(symbols)} symbols from {file_path}")
+            logger.debug(f"Indexed {len(symbols)} symbols from {file_path}")
         
         return symbols
     

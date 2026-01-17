@@ -14,6 +14,8 @@ from tree_sitter import Node
 from app.models.code_graph import CodeSymbol, SymbolRelationship
 from app.services.parsing.tree_sitter_parser import TreeSitterParser
 from app.services.parsing.language_detector import detect_language
+from app.services.storage.file_content_service import FileContentService
+from app.services.analysis.import_resolver import ImportResolver
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +31,17 @@ class CallGraphBuilder:
     def __init__(self, parser: Optional[TreeSitterParser] = None):
         """Initialize call graph builder with Tree-sitter parser."""
         self.parser = parser or TreeSitterParser()
+        
         # Cache for symbol lookups
         self.symbol_cache: Dict[str, CodeSymbol] = {}
+        
+        # NEW: Add dependencies for file access and import resolution
+        self.file_service = FileContentService()
+        self.import_resolver = ImportResolver()
+        self.call_extractor = CallExtractor(self.parser)
+        
+        # Import resolution graph: {file_path: {symbol_name: CodeSymbol}}
+        self.import_graph: Dict[str, Dict[str, CodeSymbol]] = {}
     
     async def build_call_graph(
         self,
@@ -49,6 +60,16 @@ class CallGraphBuilder:
         Returns:
             Statistics dict with counts of relationships created
         """
+        # Load repository details for file access
+        from app.models.repository import Repository
+        repo = db.exec(
+            select(Repository).where(Repository.id == repo_id)
+        ).first()
+        
+        if not repo:
+            logger.error(f"Repository {repo_id} not found")
+            return {"error": "Repository not found"}
+        
         # Load all symbols for this repository
         symbols = db.exec(
             select(CodeSymbol)
@@ -60,6 +81,13 @@ class CallGraphBuilder:
         
         # Build symbol lookup cache by file and name
         self._build_symbol_cache(symbols)
+        
+        # NEW: Build import resolution graph
+        logger.info("Building import resolution graph...")
+        self.import_graph = self.import_resolver.build_import_graph(
+            repo_id, commit_sha, db
+        )
+        logger.info(f"Import graph built for {len(self.import_graph)} files")
         
         # Group symbols by file for efficient processing
         symbols_by_file: Dict[str, List[CodeSymbol]] = {}
@@ -79,7 +107,7 @@ class CallGraphBuilder:
         
         for file_path, file_symbols in symbols_by_file.items():
             file_relationships = await self._analyze_file_calls(
-                file_path, file_symbols, repo_id, commit_sha, db
+                file_path, file_symbols, repo_id, commit_sha, db, repo
             )
             relationships.extend(file_relationships)
             stats["files_analyzed"] += 1
@@ -121,7 +149,8 @@ class CallGraphBuilder:
         symbols: List[CodeSymbol],
         repo_id: uuid.UUID,
         commit_sha: str,
-        db: Session
+        db: Session,
+        repo: 'Repository'  # NEW: Repository object for file access
     ) -> List[SymbolRelationship]:
         """
         Analyze function calls in a single file.
@@ -130,21 +159,51 @@ class CallGraphBuilder:
         """
         relationships = []
         
-        # Read file content (we need to re-parse to get full AST)
-        # In a production system, we might cache parsed ASTs
-        # For now, we'll skip files we can't read
+        # NEW: Retrieve source code from MinIO
+        source_code = self.file_service.get_file_content(
+            repo_id=repo_id,
+            commit_sha=commit_sha,
+            file_path=file_path,
+            provider=repo.provider,
+            owner=repo.owner,
+            name=repo.name
+        )
+        
+        if not source_code:
+            logger.warning(
+                f"Could not retrieve source for {file_path}, skipping call analysis"
+            )
+            return relationships
+        
         try:
-            # We need the actual file content - this would come from the repo
-            # For now, we'll work with what we have in symbols
             
             # Extract call relationships from function bodies
             for symbol in symbols:
                 if symbol.symbol_type in ["function", "method"]:
-                    # Get calls made by this function
-                    calls = await self._extract_calls_from_function(
-                        symbol, file_path, repo_id, commit_sha, db
+                    # NEW: Use CallExtractor to get call names from source
+                    called_names = self.call_extractor.extract_calls_from_source(
+                        source_code, file_path, symbol
                     )
-                    relationships.extend(calls)
+                    
+                    # Resolve each call to target symbol and create relationship
+                    for call_name in called_names:
+                        target = self._resolve_symbol(call_name, file_path, "function")
+                        
+                        if target:
+                            rel = SymbolRelationship(
+                                repo_id=repo_id,
+                                commit_sha=commit_sha,
+                                source_id=symbol.id,
+                                target_id=target.id,
+                                relationship_type="calls",
+                                extra_metadata={"call_name": call_name}
+                            )
+                            relationships.append(rel)
+                        else:
+                            logger.debug(
+                                f"Could not resolve call '{call_name}' from "
+                                f"{symbol.qualified_name} in {file_path}"
+                            )
                 
                 # Extract inheritance relationships from classes
                 if symbol.symbol_type == "class":
@@ -158,29 +217,7 @@ class CallGraphBuilder:
         
         return relationships
     
-    async def _extract_calls_from_function(
-        self,
-        function_symbol: CodeSymbol,
-        file_path: str,
-        repo_id: uuid.UUID,
-        commit_sha: str,
-        db: Session
-    ) -> List[SymbolRelationship]:
-        """
-        Extract function calls from a function's metadata.
-        
-        Note: This is a simplified version. A full implementation would
-        re-parse the function body to extract call expressions.
-        
-        For now, we'll extract calls from the symbol's metadata if available,
-        or use a pattern-based approach.
-        """
-        relationships = []
-        
-        # TODO: Implement full call extraction by parsing function body
-        # For now, return empty list - this will be enhanced
-        
-        return relationships
+
     
     async def _extract_inheritance(
         self,
@@ -219,20 +256,40 @@ class CallGraphBuilder:
         symbol_type: Optional[str] = None
     ) -> Optional[CodeSymbol]:
         """
-        Resolve a symbol name to its definition.
+        Enhanced symbol resolution using import graph.
         
         Search order:
-        1. Same file, qualified name
-        2. Same file, simple name
-        3. Imported symbols
-        4. Global symbols
+        1. Same file symbols (local functions/classes)
+        2. Imported symbols (via import graph)
+        3. Global search (fallback for edge cases)
+        
+        Args:
+            symbol_name: Name of symbol to resolve
+            current_file: File where the reference appears
+            symbol_type: Optional filter by symbol type
+            
+        Returns:
+            Resolved CodeSymbol or None
         """
-        # Try same file first
+        # 1. Try same file - qualified name
         key = f"{current_file}::{symbol_name}"
         if key in self.symbol_cache:
-            return self.symbol_cache[key]
+            candidate = self.symbol_cache[key]
+            if symbol_type is None or candidate.symbol_type == symbol_type:
+                return candidate
         
-        # Try without file prefix (global search)
+        # 2. Check import graph for this file
+        if current_file in self.import_graph:
+            if symbol_name in self.import_graph[current_file]:
+                candidate = self.import_graph[current_file][symbol_name]
+                if symbol_type is None or candidate.symbol_type == symbol_type:
+                    logger.debug(
+                        f"Resolved '{symbol_name}' via import in {current_file} -> "
+                        f"{candidate.file_path}::{candidate.qualified_name}"
+                    )
+                    return candidate
+        
+        # 3. Fallback: global search (handles some edge cases like built-in overrides)
         for cached_key, symbol in self.symbol_cache.items():
             if symbol.name == symbol_name or symbol.qualified_name == symbol_name:
                 if symbol_type is None or symbol.symbol_type == symbol_type:
@@ -241,8 +298,11 @@ class CallGraphBuilder:
         return None
     
     def clear_cache(self):
-        """Clear symbol cache."""
+        """Clear all caches."""
         self.symbol_cache.clear()
+        self.import_graph.clear()
+        self.file_service.clear_cache()
+        self.import_resolver.clear_cache()
 
 
 class CallExtractor:

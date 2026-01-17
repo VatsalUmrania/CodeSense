@@ -85,7 +85,7 @@ class ChatService:
         self.db = db
         # Initialize Services
         self.llm_service = GeminiService()
-        self.vector_service = VectorSearchService(self.llm_service)
+        self.vector_service = VectorSearchService()
         
         # Initialize Hybrid Query Service (Phase 3)
         self.hybrid_service = HybridQueryService(db)
@@ -139,11 +139,11 @@ class ChatService:
                 # Convert retrieved chunks to citations
                 for chunk in hybrid_result.retrieved_chunks:
                     citations.append(ChunkCitation(
-                        file_path=chunk.get('file_path', ''),
-                        start_line=chunk.get('start_line', 0),
-                        end_line=chunk.get('end_line', 0),
-                        content=chunk.get('content', ''),
-                        score=chunk.get('score', 0.0)
+                        file_path=chunk.metadata.get('file_path', ''),
+                        start_line=chunk.metadata.get('start_line', 0),
+                        end_line=chunk.metadata.get('end_line', 0),
+                        content=chunk.page_content,
+                        score=chunk.score
                     ))
                 
                 logger.info(f"Hybrid query: {hybrid_result.query_type}, " +

@@ -9,6 +9,7 @@ class ArtifactType(str, Enum):
     MANIFEST = "manifest"
     AST_DATA = "ast_data"
     SOURCE_CODE = "source_code"
+    SOURCE_TREE = "source_tree"  # Complete source tarball for call graph analysis
 
 # 2. Define Path Helper
 class StoragePaths:
