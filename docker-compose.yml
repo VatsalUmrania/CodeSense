@@ -20,6 +20,9 @@ services:
     container_name: codesense-api
     ports:
       - "8000:8000"
+    # Allow container to access host services (Ollama)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - .env
     environment:
@@ -30,6 +33,9 @@ services:
       - QDRANT_URL=http://qdrant:6333
       - PYTHONPATH=/app
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2}
       - BACKEND_CORS_ORIGINS=[ "http://localhost:3000", "http://localhost:5555", "http://178.128.69.202:3000", "http://178.128.69.202:5555", "https://accounts.google.com", "https://clerk.accounts.dev" ]
     depends_on:
       - redis

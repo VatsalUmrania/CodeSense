@@ -41,6 +41,11 @@ class Settings(BaseSettings):
 
     # LLM
     GOOGLE_API_KEY: str
+    
+    # LLM PROVIDER CONFIGURATION
+    LLM_PROVIDER: str = "gemini"  # Options: "gemini", "ollama"
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OLLAMA_MODEL: str = "llama3.2"
 
     # --- FIX: ADD CELERY CONFIG HERE ---
     # These were missing, causing the AttributeError
