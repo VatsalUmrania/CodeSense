@@ -43,7 +43,7 @@ class VectorSearchService:
                     ]
                 ),
                 limit=limit,
-                score_threshold=0.35 # FIX: Lowered from 0.60 to 0.35 to catch more relevant results
+                score_threshold=0.30  # OPTIMIZED: Lowered from 0.35 to 0.30 for better recall
             )
             
             logger.info(f"Qdrant returned {len(results)} hits.")

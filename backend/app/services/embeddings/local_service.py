@@ -44,6 +44,8 @@ class LocalEmbeddingService:
         """
         Generate embeddings for text(s).
         
+        OPTIMIZED: Uses Redis cache for single queries to avoid re-computation.
+        
         Args:
             texts: Single text string or list of texts
             batch_size: Number of texts to process at once
@@ -54,6 +56,19 @@ class LocalEmbeddingService:
         is_single = isinstance(texts, str)
         
         if is_single:
+            # OPTIMIZATION: Check cache for single queries
+            try:
+                from app.services.cache.redis_cache import get_cache_service
+                cache = get_cache_service()
+                
+                if cache.is_available():
+                    cached_embedding = cache.get_embedding(texts)
+                    if cached_embedding:
+                        logger.debug("✓ Embedding cache hit!")
+                        return cached_embedding
+            except Exception as e:
+                logger.debug(f"Cache check failed (non-critical): {e}")
+            
             texts = [texts]
         
         # Generate embeddings in batches for efficiency
@@ -68,7 +83,19 @@ class LocalEmbeddingService:
         embeddings_list = embeddings.tolist()
         
         if is_single:
-            return embeddings_list[0]
+            result = embeddings_list[0]
+            
+            # OPTIMIZATION: Cache the result for future requests
+            try:
+                from app.services.cache.redis_cache import get_cache_service
+                cache = get_cache_service()
+                
+                if cache.is_available():
+                    cache.set_embedding(texts[0], result, ttl=86400)  # 24h TTL
+            except Exception as e:
+                logger.debug(f"Cache set failed (non-critical): {e}")
+            
+            return result
         
         return embeddings_list
     

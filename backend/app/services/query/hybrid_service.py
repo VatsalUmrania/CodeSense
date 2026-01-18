@@ -76,6 +76,8 @@ class HybridQueryService:
         """
         Execute a hybrid query.
         
+        OPTIMIZED: Uses Redis cache for complete query results.
+        
         Args:
             query: User's natural language query
             repo_id: Repository UUID
@@ -85,6 +87,26 @@ class HybridQueryService:
         Returns:
             HybridQueryResult with both static and semantic results
         """
+        # OPTIMIZATION: Check cache for complete query result
+        try:
+            from app.services.cache.redis_cache import get_cache_service
+            cache = get_cache_service()
+            
+            if cache.is_available():
+                cached_result = cache.get_query_result(query, str(repo_id), commit_sha or "")
+                if cached_result:
+                    # Reconstruct HybridQueryResult from cached data
+                    return HybridQueryResult(
+                        query=cached_result["query"],
+                        query_type=cached_result["query_type"],
+                        static_results=cached_result.get("static_results"),
+                        retrieved_chunks=cached_result.get("retrieved_chunks", []),
+                        llm_answer=cached_result["llm_answer"],
+                        metadata=cached_result.get("metadata", {})
+                    )
+        except Exception as e:
+            logger.debug(f"Cache check failed (non-critical): {e}")
+        
         # Step 1: Classify the query
         intent = self.query_router.classify_query(query, str(repo_id))
         logger.info(f"Classified query as {intent.query_type}: {intent.primary_intent}")
@@ -162,7 +184,7 @@ class HybridQueryService:
             "entities": intent.entities
         }
         
-        return HybridQueryResult(
+        result = HybridQueryResult(
             query=query,
             query_type=intent.query_type,
             static_results=static_results,
@@ -170,6 +192,26 @@ class HybridQueryService:
             llm_answer=llm_answer,
             metadata=metadata
         )
+        
+        # OPTIMIZATION: Cache the complete result for future identical queries
+        try:
+            from app.services.cache.redis_cache import get_cache_service
+            cache = get_cache_service()
+            
+            if cache.is_available():
+                cache_data = {
+                    "query": result.query,
+                    "query_type": result.query_type,
+                    "static_results": result.static_results,
+                    "retrieved_chunks": result.retrieved_chunks,
+                    "llm_answer": result.llm_answer,
+                    "metadata": result.metadata
+                }
+                cache.set_query_result(query, str(repo_id), commit_sha or "", cache_data, ttl=3600)  # 1h TTL
+        except Exception as e:
+            logger.debug(f"Cache save failed (non-critical): {e}")
+        
+        return result
     
     async def _generate_llm_response(
         self,

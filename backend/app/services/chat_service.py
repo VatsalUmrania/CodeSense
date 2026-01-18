@@ -147,12 +147,13 @@ class ChatService:
                 static_results = hybrid_result.static_results
                 
                 # Convert retrieved chunks to citations
+                # FIX: Map to correct ChunkCitation schema fields
                 for chunk in hybrid_result.retrieved_chunks:
                     citations.append(ChunkCitation(
-                        file_path=chunk.metadata.get('file_path', ''),
+                        file_path=chunk.metadata.get('file_path', 'unknown'),
+                        symbol_name=chunk.metadata.get('symbol_name', 'code_block'),  # FIX: was missing
                         start_line=chunk.metadata.get('start_line', 0),
-                        end_line=chunk.metadata.get('end_line', 0),
-                        content=chunk.page_content,
+                        content_preview=chunk.page_content[:200],  # FIX: was 'content', limit to 200 chars
                         score=chunk.score
                     ))
                 
