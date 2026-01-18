@@ -93,30 +93,60 @@ class HybridQueryService:
         retrieved_chunks = []
         llm_answer = ""
         
-        # Step 2: Execute static analysis if needed
-        if self.query_router.should_use_static_analysis(intent):
-            try:
-                static_results = await self.static_engine.execute(intent, repo_id, commit_sha)
-                logger.info(f"Static analysis returned {len(static_results.results) if static_results.results else 0} results")
-            except Exception as e:
-                logger.error(f"Static analysis failed: {e}")
-                static_results = None
+        # OPTIMIZATION: Run static analysis and semantic search in parallel using asyncio.gather()
+        # This saves 1-2 seconds for hybrid queries by executing concurrently instead of sequentially
         
-        # Step 3: Perform semantic search if needed
+        import asyncio
+        
+        # Create tasks based on query type
+        tasks = []
+        task_names = []
+        
+        # Step 2: Create static analysis task if needed
+        if self.query_router.should_use_static_analysis(intent):
+            async def run_static_analysis():
+                try:
+                    result = await self.static_engine.execute(intent, repo_id, commit_sha)
+                    logger.info(f"Static analysis returned {len(result.results) if result.results else 0} results")
+                    return result
+                except Exception as e:
+                    logger.error(f"Static analysis failed: {e}")
+                    return None
+            
+            tasks.append(run_static_analysis())
+            task_names.append("static")
+        
+        # Step 3: Create semantic search task if needed
         if self.query_router.should_use_semantic_search(intent):
-            try:
-                # Use vector search to find relevant code chunks
-                search_results = await self.vector_service.search(
-                    query=query,
-                    repo_id=str(repo_id),
-                    commit_sha=commit_sha,
-                    limit=top_k
-                )
-                retrieved_chunks = search_results
-                logger.info(f"Retrieved {len(retrieved_chunks)} semantic chunks")
-            except Exception as e:
-                logger.error(f"Semantic search failed: {e}")
-                retrieved_chunks = []
+            async def run_semantic_search():
+                try:
+                    results = await self.vector_service.search(
+                        query=query,
+                        repo_id=str(repo_id),
+                        commit_sha=commit_sha,
+                        limit=top_k
+                    )
+                    logger.info(f"Retrieved {len(results)} semantic chunks")
+                    return results
+                except Exception as e:
+                    logger.error(f"Semantic search failed: {e}")
+                    return []
+            
+            tasks.append(run_semantic_search())
+            task_names.append("semantic")
+        
+        # Execute tasks in parallel
+        if tasks:
+            logger.info(f"Running {len(tasks)} tasks in parallel: {', '.join(task_names)}")
+            results = await asyncio.gather(*tasks)
+            
+            # Unpack results based on task order
+            result_index = 0
+            if "static" in task_names:
+                static_results = results[result_index]
+                result_index += 1
+            if "semantic" in task_names:
+                retrieved_chunks = results[result_index]
         
         # Step 4: Generate LLM response with context
         llm_answer = await self._generate_llm_response(

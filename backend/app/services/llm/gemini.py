@@ -46,7 +46,7 @@ class GeminiService:
             temperature=0
         )
         self.llm_pro = ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash",
             google_api_key=settings.GOOGLE_API_KEY,
             temperature=0.3
         )
@@ -76,47 +76,34 @@ class GeminiService:
     # --- Worker Method (Synchronous) ---
     def embed_content(self, text: str) -> List[float]:
         """
-        Used by Celery Worker to embed code chunks.
-        Note: With Ollama provider, this uses Gemini or local embedding model.
-        """
-        if self.provider == "ollama":
-            # Ollama doesn't provide embeddings API, use local model instead
-            logger.warning("Embedding with Ollama not supported, using local embedding model")
-            return []
+        ⚠️ DEPRECATED: This should NOT be used for embeddings!
         
-        try:
-            if not text or not text.strip():
-                return []
-            result = genai.embed_content(
-                model=self.embed_model,
-                content=text,
-                task_type="retrieval_document"
-            )
-            return result['embedding']
-        except Exception as e:
-            logger.error(f"Gemini Embedding Error: {e}")
-            return []
+        Embeddings should ALWAYS use LocalEmbeddingService (BGE model) to:
+        1. Avoid API costs/quotas
+        2. Work offline
+        3. Maintain consistency with indexed data
+        
+        This method exists only for backward compatibility.
+        """
+        logger.warning("⚠️ embed_content() called on GeminiService - use LocalEmbeddingService instead!")
+        # Return empty to force use of local embeddings
+        return []
 
     # --- Agent Methods (Asynchronous) ---
     async def embed_query(self, text: str) -> List[float]:
         """
-        Used by VectorSearchService to embed the user's question.
-        Note: With Ollama provider, this uses local embedding model.
-        """
-        if self.provider == "ollama":
-            logger.warning("Query embedding with Ollama not supported, using local embedding model")
-            return []
+        ⚠️ DEPRECATED: This should NOT be used for embeddings!
         
-        try:
-            result = genai.embed_content(
-                model=self.embed_model,
-                content=text,
-                task_type="retrieval_query"
-            )
-            return result['embedding']
-        except Exception as e:
-            logger.error(f"Gemini Query Embedding Error: {e}")
-            return []
+        Query embeddings should ALWAYS use LocalEmbeddingService (BGE model) to:
+        1. Avoid API costs/quotas
+        2. Match the embedding model used during indexing
+        3. Ensure fast, offline operation
+        
+        This method exists only for backward compatibility.
+        """
+        logger.warning("⚠️ embed_query() called on GeminiService - use LocalEmbeddingService instead!")
+        # Return empty to force use of local embeddings
+        return []
 
     async def grade_relevance(self, question: str, context: str) -> RelevanceGrade:
         """

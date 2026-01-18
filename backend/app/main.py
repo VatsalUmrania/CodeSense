@@ -80,6 +80,10 @@ async def global_exception_handler(request: Request, exc: Exception):
         },
     )
 
+# Add Performance Monitoring
+from app.middleware.performance import DetailedPerformanceMiddleware
+app.add_middleware(DetailedPerformanceMiddleware)
+
 if settings.BACKEND_CORS_ORIGINS:
     app.add_middleware(
         CORSMiddleware,
