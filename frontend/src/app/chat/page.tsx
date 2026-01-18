@@ -19,7 +19,13 @@ import { getCurrentUser } from "@/app/actions";
 import type { components } from "@/lib/api/types";
 
 // Types
-type ChunkCitation = components["schemas"]["ChunkCitation"];
+interface Citation {
+    file_path: string;
+    symbol_name?: string;
+    start_line?: number;
+    content_preview?: string;
+    score?: number;
+}
 
 function ChatInterface() {
     const searchParams = useSearchParams();
@@ -77,15 +83,15 @@ function ChatInterface() {
     }, [messages, isChatting]);
 
     // 3. Handle Citation Click
-    const handleCitationClick = async (citation: ChunkCitation) => {
+    const handleCitationClick = async (citation: Citation) => {
         setInspectorOpen(true);
         // Optimistic / Loading State
         setActiveFile({
             path: citation.file_path,
             content: citation.content_preview || "// Loading full content...",
             language: citation.file_path.split('.').pop() || 'text',
-            startLine: citation.start_line,
-            endLine: citation.start_line + 10 // approximate
+            startLine: citation.start_line || 1,
+            endLine: (citation.start_line || 1) + 10 // approximate
         });
 
         if (repoId) {
@@ -95,8 +101,8 @@ function ChatInterface() {
                     path: citation.file_path,
                     content: content,
                     language: citation.file_path.split('.').pop() || 'text',
-                    startLine: citation.start_line,
-                    endLine: citation.start_line + 20 // Highlight range
+                    startLine: citation.start_line || 1,
+                    endLine: (citation.start_line || 1) + 20 // Highlight range
                 });
             }
         }
@@ -112,6 +118,10 @@ function ChatInterface() {
     return (
         // FIX: Use fixed positioning to anchor below the 64px (h-16) header
         <div className="fixed inset-0 top-16 z-0 flex w-full bg-background overflow-hidden font-sans">
+
+            {/* Ambient Background Glow - Matching Landing Page */}
+            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[600px] bg-primary/10 rounded-full blur-[120px] -z-10 pointer-events-none" />
+            <div className="absolute bottom-0 right-0 w-[500px] h-[500px] bg-blue-500/5 rounded-full blur-[100px] -z-10 pointer-events-none" />
 
             {/* 1. Left Sidebar */}
             <AppSidebar
@@ -129,7 +139,7 @@ function ChatInterface() {
             <main className="flex-1 flex flex-col h-full min-w-0 relative z-10">
 
                 {/* Header inside chat */}
-                <header className="h-14 border-b border-border flex items-center justify-between px-6 bg-background/80 backdrop-blur-md sticky top-0 z-20 shrink-0">
+                <header className="h-14 border-b border-border/40 flex items-center justify-between px-6 bg-background/40 backdrop-blur-md sticky top-0 z-20 shrink-0">
                     <RepoPicker
                         currentRepoUrl={repoUrl}
                         onIngest={handleRepoIngest}
