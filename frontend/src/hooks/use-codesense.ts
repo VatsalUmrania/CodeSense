@@ -1,14 +1,10 @@
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@clerk/nextjs";
+import type { components } from "@/lib/api/types";
 
 // --- Type Definitions (Matched to your Python Schemas) ---
-export interface Source {
-  file_path: string;
-  symbol_name?: string;
-  start_line?: number;
-  content_preview?: string;
-}
+export type Source = components["schemas"]["ChunkCitation"];
 
 export interface Message {
   id?: string;
@@ -28,11 +24,11 @@ const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/
 
 export function useCodeSense() {
   const { getToken } = useAuth();
-  
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [isChatting, setIsChatting] = useState(false);
   const [ingestStatus, setIngestStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
-  
+
   const [repoId, setRepoId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -83,6 +79,16 @@ export function useCodeSense() {
     }
   };
 
+  const handleDeleteSession = async (sId: string) => {
+    // Stub: Optimistic update only since API endpoint is missing
+    setSessions((prev) => prev.filter((s) => s.id !== sId));
+    if (sessionId === sId) {
+      setSessionId(null);
+      setMessages([]);
+    }
+    toast.success("Session deleted");
+  };
+
   // --- Ingestion ---
   const ingestRepo = async (url: string) => {
     if (!url) return;
@@ -92,17 +98,17 @@ export function useCodeSense() {
     try {
       // FIX: Send JSON body { repo_url: url }
       // AND remove the query param ?url=...
-      const data = await fetchAPI("/ingest", { 
+      const data = await fetchAPI("/ingest", {
         method: "POST",
         body: JSON.stringify({ repo_url: url })
       });
-      
+
       // ... existing polling logic ...
       const taskId = data.task_id;
       const interval = setInterval(async () => {
         try {
           const statusRes = await fetchAPI(`/ingest/${data.run_id}`); // Ensure this matches your route
-          
+
           if (statusRes.status === "completed") { // Check your Enum string value
             clearInterval(interval);
             setIngestStatus("success");
@@ -113,8 +119,8 @@ export function useCodeSense() {
             clearInterval(interval);
             throw new Error(statusRes.error || "Ingestion failed");
           }
-        } catch (e) { 
-            // Handle polling errors 
+        } catch (e) {
+          // Handle polling errors 
         }
       }, 2000);
 
@@ -175,6 +181,12 @@ export function useCodeSense() {
     }
   };
 
+  const fetchFileContent = async (repoId: string, filePath: string) => {
+    // Stub: Return null or mock content since API is missing
+    console.warn("fetchFileContent is a stub. Backend support needed.");
+    return null;
+  };
+
   return {
     messages,
     isChatting,
@@ -189,6 +201,8 @@ export function useCodeSense() {
     sendMessage,
     // Helper to toggle pinned files
     togglePin: (file: string) => setPinnedFiles(p => p.includes(file) ? p.filter(f => f !== file) : [...p, file]),
-    clearSession: () => { setSessionId(null); setMessages([]); }
+    clearSession: () => { setSessionId(null); setMessages([]); },
+    fetchFileContent,
+    handleDeleteSession
   };
 }
